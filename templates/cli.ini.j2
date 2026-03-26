@@ -1,0 +1,39 @@
+{#- jinja2: lstrip_blocks: true, trim_blocks: true -#}
+# {{ ansible_managed }}
+# Certbot CLI configuration file
+
+# ACME server
+{% if acme_provider == 'custom' %}
+server = {{ acme_custom_server_url }}
+{% elif acme_staging %}
+server = {{ acme_provider_urls[acme_provider].staging }}
+{% else %}
+server = {{ acme_provider_urls[acme_provider].production }}
+{% endif %}
+
+# Account settings
+email = {{ acme_email }}
+{% if acme_agree_tos %}
+agree-tos = true
+{% endif %}
+no-eff-email = true
+
+# Directories
+work-dir = {{ acme_work_dir }}
+logs-dir = {{ acme_log_dir }}
+config-dir = {{ acme_config_dir }}
+
+# Key settings
+key-type = {{ acme_default_key_type }}
+{% if acme_default_key_type == 'rsa' %}
+rsa-key-size = {{ acme_default_key_size }}
+{% else %}
+elliptic-curve = secp{{ acme_default_key_size }}r1
+{% endif %}
+
+{% if acme_preferred_chain | length > 0 %}
+preferred-chain = {{ acme_preferred_chain }}
+{% endif %}
+
+# Renewal
+renew-by-default = false

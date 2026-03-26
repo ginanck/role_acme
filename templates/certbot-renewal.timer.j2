@@ -1,0 +1,15 @@
+{#- jinja2: lstrip_blocks: true, trim_blocks: true -#}
+# {{ ansible_managed }}
+
+[Unit]
+Description=Certbot renewal timer — runs certbot-renewal.service on schedule
+
+[Timer]
+OnCalendar={{ acme_renewal_systemd_calendar }}
+RandomizedDelaySec={{ acme_renewal_systemd_random_delay }}
+{% if acme_renewal_systemd_persistent %}
+Persistent=true
+{% endif %}
+
+[Install]
+WantedBy=timers.target

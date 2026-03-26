@@ -1,0 +1,254 @@
+---
+# defaults file for role_acme
+
+# ================================================================
+# ACME PROVIDER
+# ================================================================
+
+# ACME-compatible CA to use
+# Supported: letsencrypt, zerossl, buypass, custom
+acme_provider: "letsencrypt"
+
+# Contact email for account registration and expiry notifications
+acme_email: ""
+
+# Use staging/test endpoints (no rate limits, untrusted certs)
+# Always set to true when testing to avoid hitting production rate limits
+acme_staging: false
+
+# Custom ACME server URL (only used when acme_provider is "custom")
+acme_custom_server_url: ""
+
+# Accept ACME provider terms of service
+acme_agree_tos: true
+
+# ================================================================
+# ACME PROVIDER URLS (internal — override only for custom providers)
+# ================================================================
+
+acme_provider_urls:
+  letsencrypt:
+    production: "https://acme-v02.api.letsencrypt.org/directory"
+    staging: "https://acme-staging-v02.api.letsencrypt.org/directory"
+  zerossl:
+    production: "https://acme.zerossl.com/v2/DV90"
+    staging: ""
+  buypass:
+    production: "https://api.buypass.com/acme/directory"
+    staging: "https://api.test4.buypass.no/acme/directory"
+
+# ================================================================
+# CERTIFICATE DEFINITIONS
+# ================================================================
+
+# List of certificates to manage. Each entry defines one certificate.
+#
+# acme_certificates:
+#   - name: example.com                    # Certificate identifier (used for file naming)
+#     domains:                             # List of domains for this certificate (SAN)
+#       - example.com
+#       - www.example.com
+#     challenge: http-01                   # Challenge type: http-01, dns-01, standalone
+#     wildcard: false                      # Request wildcard cert (requires dns-01)
+#     key_type: ecdsa                      # Key type: rsa, ecdsa
+#     key_size: 256                        # RSA: 2048, 4096 | ECDSA: 256, 384
+#     deploy_services: []                  # Services to reload after issuance (e.g., haproxy, nginx)
+#     combine_pem: false                   # Generate combined fullchain+privkey PEM (for HAProxy)
+#     combine_pem_path: ""                 # Custom path for combined PEM file
+#     enabled: true                        # Set to false to skip this certificate
+acme_certificates: []
+
+# ================================================================
+# CHALLENGE CONFIGURATION
+# ================================================================
+
+# --- HTTP-01 Challenge ---
+# Webroot path where ACME challenge files are placed
+# The web server must serve /.well-known/acme-challenge/ from this path
+acme_http01_webroot: "/var/www/acme-challenge"
+
+# Create the webroot directory if it does not exist
+acme_http01_create_webroot: true
+
+# Owner and group for the webroot directory
+acme_http01_webroot_owner: "root"
+acme_http01_webroot_group: "root"
+acme_http01_webroot_mode: "0755"
+
+# --- HTTP-01 Standalone ---
+# Port for certbot standalone HTTP server (used when challenge is "standalone")
+acme_standalone_http_port: 80
+
+# --- DNS-01 Challenge ---
+# DNS provider plugin for certbot (e.g., cloudflare, route53, digitalocean, google, rfc2136)
+acme_dns01_provider: ""
+
+# Path to DNS provider credentials file on the target host
+acme_dns01_credentials_file: ""
+
+# DNS provider credentials content (will be written to acme_dns01_credentials_file)
+# Use ansible-vault to encrypt sensitive values
+# Example for Cloudflare:
+#   acme_dns01_credentials:
+#     dns_cloudflare_api_token: "your-api-token"
+acme_dns01_credentials: {}
+
+# DNS propagation wait time in seconds
+acme_dns01_propagation_seconds: 60
+
+# ================================================================
+# KEY & CERTIFICATE SETTINGS
+# ================================================================
+
+# Default key type for certificates: rsa or ecdsa
+acme_default_key_type: "ecdsa"
+
+# Default key size
+# RSA: 2048 or 4096
+# ECDSA: 256 (P-256) or 384 (P-384)
+acme_default_key_size: 256
+
+# Preferred certificate chain (Let's Encrypt specific)
+# Set to "ISRG Root X1" for modern chain, empty for default
+acme_preferred_chain: ""
+
+# ================================================================
+# PATHS
+# ================================================================
+
+# Base configuration directory for certbot / ACME client
+acme_config_dir: "/etc/letsencrypt"
+
+# Working directory for certbot
+acme_work_dir: "{{ acme_config_dir }}/work"
+
+# Log directory for certbot
+acme_log_dir: "/var/log/letsencrypt"
+
+# Live certificate directory (where certbot stores current symlinks)
+acme_cert_dir: "{{ acme_config_dir }}/live"
+
+# Renewal configuration directory
+acme_renewal_config_dir: "{{ acme_config_dir }}/renewal"
+
+# Renewal hooks directories
+acme_hooks_dir: "{{ acme_config_dir }}/renewal-hooks"
+acme_pre_hook_dir: "{{ acme_hooks_dir }}/pre"
+acme_post_hook_dir: "{{ acme_hooks_dir }}/post"
+acme_deploy_hook_dir: "{{ acme_hooks_dir }}/deploy"
+
+# Directory for combined PEM files (used by HAProxy, etc.)
+acme_combined_pem_dir: "/etc/ssl/acme"
+
+# ================================================================
+# CERTIFICATE DEPLOYMENT
+# ================================================================
+
+# Default file ownership and permissions for deployed certificates
+acme_cert_owner: "root"
+acme_cert_group: "root"
+acme_cert_mode: "0640"
+
+# Default file permissions for private keys (more restrictive)
+acme_key_mode: "0600"
+
+# Default file permissions for combined PEM files
+acme_combined_pem_mode: "0640"
+
+# ================================================================
+# AUTOMATED RENEWAL
+# ================================================================
+
+# Enable automated certificate renewal
+acme_renewal_enabled: true
+
+# Renewal method: cron or systemd
+acme_renewal_method: "systemd"
+
+# Cron schedule for renewal checks (only used when acme_renewal_method is "cron")
+# Default: twice daily at random minute (recommended by Let's Encrypt)
+acme_renewal_cron_minute: "{{ 59 | random(seed=inventory_hostname) }}"
+acme_renewal_cron_hour: "0,12"
+acme_renewal_cron_day: "*"
+acme_renewal_cron_month: "*"
+acme_renewal_cron_weekday: "*"
+acme_renewal_cron_user: "root"
+
+# Systemd timer schedule (only used when acme_renewal_method is "systemd")
+# Default: twice daily with random delay up to 12 hours
+acme_renewal_systemd_calendar: "*-*-* 00,12:00:00"
+acme_renewal_systemd_random_delay: "43200"
+acme_renewal_systemd_persistent: true
+
+# Number of days before expiry to trigger renewal
+acme_renewal_days_before_expiry: 30
+
+# ================================================================
+# RENEWAL HOOKS
+# ================================================================
+
+# Pre-hook command (runs before renewal attempt)
+# Example: stop a standalone web server that binds to port 80
+acme_renewal_pre_hook: ""
+
+# Post-hook command (runs after renewal attempt, regardless of success)
+acme_renewal_post_hook: ""
+
+# Deploy hook commands (run after each successful renewal)
+# These are in addition to the per-certificate deploy_services
+acme_renewal_deploy_hooks: []
+# Example:
+# acme_renewal_deploy_hooks:
+#   - name: reload-haproxy
+#     content: |
+#       systemctl reload haproxy
+#   - name: combine-certs
+#     content: |
+#       cat /etc/letsencrypt/live/$RENEWED_DOMAIN/fullchain.pem \
+#           /etc/letsencrypt/live/$RENEWED_DOMAIN/privkey.pem \
+#           > /etc/haproxy/certs/$RENEWED_DOMAIN.pem
+
+# ================================================================
+# CERTIFICATE BACKUP
+# ================================================================
+
+# Back up existing certificates before renewal
+acme_backup_enabled: true
+
+# Backup directory
+acme_backup_dir: "/var/backups/acme"
+
+# Number of backups to retain per certificate
+acme_backup_retain: 5
+
+# ================================================================
+# MONITORING & OBSERVABILITY
+# ================================================================
+
+# Deploy a certificate expiry monitoring script
+acme_monitoring_enabled: true
+
+# Path to install the monitoring script
+acme_monitoring_script_path: "/usr/local/bin/acme-cert-check"
+
+# Expiry warning threshold in days (script returns non-zero when below)
+acme_monitoring_warning_days: 14
+
+# Expiry critical threshold in days
+acme_monitoring_critical_days: 7
+
+# Drop a status file after each renewal attempt for external monitoring
+acme_monitoring_status_file: "/var/run/acme-renewal-status"
+
+# Log file for renewal operations
+acme_renewal_log_file: "{{ acme_log_dir }}/renewal.log"
+
+# ================================================================
+# DRY RUN & SAFETY
+# ================================================================
+
+# Perform a dry run without actually issuing/renewing certificates
+acme_dry_run: false
+
+# Force renewal even if certificates are not near expiry
+acme_force_renewal: false

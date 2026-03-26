@@ -1,0 +1,33 @@
+---
+# tasks file for role_acme
+
+- name: Include OS-Specific Variables
+  ansible.builtin.include_vars: "{{ ansible_facts['os_family'] }}.yml"
+
+- name: Run Pre-Flight Validation Checks
+  ansible.builtin.include_tasks: validation.yml
+
+- name: Install Certbot Packages
+  vars:
+    supported_os: ["RedHat", "Debian"]
+  ansible.builtin.include_tasks: "install-{{ ansible_facts['os_family'] }}.yml"
+  when: ansible_facts['os_family'] in supported_os
+
+- name: Configure ACME Directories and Settings
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Issue Certificates
+  ansible.builtin.include_tasks: issue.yml
+  when: acme_certificates | length > 0
+
+- name: Deploy Certificates
+  ansible.builtin.include_tasks: deploy.yml
+  when: acme_certificates | selectattr('combine_pem', 'defined') | selectattr('combine_pem', 'equalto', true) | list | length > 0
+
+- name: Configure Automated Renewal
+  ansible.builtin.include_tasks: renewal.yml
+  when: acme_renewal_enabled
+
+- name: Configure Certificate Monitoring
+  ansible.builtin.include_tasks: monitoring.yml
+  when: acme_monitoring_enabled

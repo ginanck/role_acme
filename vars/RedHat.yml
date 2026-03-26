@@ -1,0 +1,20 @@
+---
+# OS-specific variables for RedHat/AlmaLinux/Rocky
+
+acme_certbot_packages:
+  - certbot
+
+acme_certbot_dns_packages:
+  cloudflare: python3-certbot-dns-cloudflare
+  route53: python3-certbot-dns-route53
+  digitalocean: python3-certbot-dns-digitalocean
+  google: python3-certbot-dns-google
+  rfc2136: python3-certbot-dns-rfc2136
+  ovh: python3-certbot-dns-ovh
+  linode: python3-certbot-dns-linode
+
+acme_certbot_standalone_package: "certbot"
+
+acme_certbot_bin: "/usr/bin/certbot"
+
+acme_cron_service: "crond"

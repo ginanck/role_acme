@@ -1,0 +1,198 @@
+---
+# tasks/issue.yml - Issue ACME certificates
+
+- name: Check Existing Certificate Validity
+  ansible.builtin.command:
+    cmd: >
+      openssl x509 -in {{ acme_cert_dir }}/{{ item.name }}/fullchain.pem
+      -noout -checkend {{ (acme_renewal_days_before_expiry * 86400) | int }}
+  register: acme_cert_check_results
+  loop: "{{ acme_certificates | selectattr('enabled', 'undefined') | list +
+            acme_certificates | selectattr('enabled', 'defined') | selectattr('enabled', 'equalto', true) | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: false
+  failed_when: false
+
+- name: Backup Existing Certificates Before Renewal
+  block:
+    - name: Create Per-Certificate Backup Directory
+      ansible.builtin.file:
+        path: "{{ acme_backup_dir }}/{{ item.item.name }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      loop: "{{ acme_cert_check_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: item.rc == 1
+
+    - name: Archive Current Certificates
+      ansible.builtin.command:
+        cmd: >
+          tar czf {{ acme_backup_dir }}/{{ item.item.name }}/{{ item.item.name }}-{{ ansible_date_time.iso8601_basic_short }}.tar.gz
+          -C {{ acme_cert_dir }} {{ item.item.name }}
+      loop: "{{ acme_cert_check_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: item.rc == 1
+      changed_when: true
+
+    - name: Clean Up Old Backups
+      ansible.builtin.shell:
+        cmd: >
+          ls -1t {{ acme_backup_dir }}/{{ item.item.name }}/*.tar.gz 2>/dev/null |
+          tail -n +{{ acme_backup_retain + 1 }} |
+          xargs -r rm -f
+      args:
+        executable: /bin/bash
+      loop: "{{ acme_cert_check_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: item.rc == 1
+      changed_when: false
+  when: acme_backup_enabled
+
+- name: Issue Certificates via HTTP-01 Webroot Challenge
+  ansible.builtin.command:
+    cmd: >
+      {{ acme_certbot_bin }} certonly
+      --non-interactive
+      --agree-tos
+      --email {{ acme_email }}
+      --server {{ _acme_server_url }}
+      --webroot
+      --webroot-path {{ acme_http01_webroot }}
+      --cert-name {{ item.item.name }}
+      {{ _acme_domain_flags }}
+      --key-type {{ item.item.key_type | default(acme_default_key_type) }}
+      {% if (item.item.key_type | default(acme_default_key_type)) == 'rsa' %}
+      --rsa-key-size {{ item.item.key_size | default(acme_default_key_size) }}
+      {% else %}
+      --elliptic-curve secp{{ item.item.key_size | default(acme_default_key_size) }}r1
+      {% endif %}
+      {% if acme_preferred_chain | length > 0 %}
+      --preferred-chain "{{ acme_preferred_chain }}"
+      {% endif %}
+      {% if acme_force_renewal %}
+      --force-renewal
+      {% endif %}
+      {% if acme_dry_run %}
+      --dry-run
+      {% endif %}
+  vars:
+    _acme_server_url: >-
+      {% if acme_provider == 'custom' %}{{ acme_custom_server_url }}{% elif acme_staging %}{{ acme_provider_urls[acme_provider].staging }}{% else %}{{ acme_provider_urls[acme_provider].production }}{% endif %}
+    _acme_domain_flags: >-
+      {% for domain in item.item.domains %}-d {{ domain }} {% endfor %}
+  loop: "{{ acme_cert_check_results.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - (item.item.enabled | default(true))
+    - (item.item.challenge | default('http-01')) == 'http-01'
+    - item.rc != 0 or acme_force_renewal
+  changed_when: true
+  notify: run deploy hooks
+
+- name: Issue Certificates via DNS-01 Challenge
+  ansible.builtin.command:
+    cmd: >
+      {{ acme_certbot_bin }} certonly
+      --non-interactive
+      --agree-tos
+      --email {{ acme_email }}
+      --server {{ _acme_server_url }}
+      --dns-{{ acme_dns01_provider }}
+      {% if acme_dns01_credentials_file | length > 0 %}
+      --dns-{{ acme_dns01_provider }}-credentials {{ acme_dns01_credentials_file }}
+      {% endif %}
+      --dns-{{ acme_dns01_provider }}-propagation-seconds {{ acme_dns01_propagation_seconds }}
+      --cert-name {{ item.item.name }}
+      {{ _acme_domain_flags }}
+      --key-type {{ item.item.key_type | default(acme_default_key_type) }}
+      {% if (item.item.key_type | default(acme_default_key_type)) == 'rsa' %}
+      --rsa-key-size {{ item.item.key_size | default(acme_default_key_size) }}
+      {% else %}
+      --elliptic-curve secp{{ item.item.key_size | default(acme_default_key_size) }}r1
+      {% endif %}
+      {% if acme_preferred_chain | length > 0 %}
+      --preferred-chain "{{ acme_preferred_chain }}"
+      {% endif %}
+      {% if acme_force_renewal %}
+      --force-renewal
+      {% endif %}
+      {% if acme_dry_run %}
+      --dry-run
+      {% endif %}
+  vars:
+    _acme_server_url: >-
+      {% if acme_provider == 'custom' %}{{ acme_custom_server_url }}{% elif acme_staging %}{{ acme_provider_urls[acme_provider].staging }}{% else %}{{ acme_provider_urls[acme_provider].production }}{% endif %}
+    _acme_domain_flags: >-
+      {% for domain in item.item.domains %}-d {{ domain }} {% endfor %}
+  loop: "{{ acme_cert_check_results.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - (item.item.enabled | default(true))
+    - (item.item.challenge | default('http-01')) == 'dns-01'
+    - item.rc != 0 or acme_force_renewal
+  changed_when: true
+  notify: run deploy hooks
+
+- name: Issue Certificates via Standalone Challenge
+  ansible.builtin.command:
+    cmd: >
+      {{ acme_certbot_bin }} certonly
+      --non-interactive
+      --agree-tos
+      --email {{ acme_email }}
+      --server {{ _acme_server_url }}
+      --standalone
+      --preferred-challenges http
+      --http-01-port {{ acme_standalone_http_port }}
+      --cert-name {{ item.item.name }}
+      {{ _acme_domain_flags }}
+      --key-type {{ item.item.key_type | default(acme_default_key_type) }}
+      {% if (item.item.key_type | default(acme_default_key_type)) == 'rsa' %}
+      --rsa-key-size {{ item.item.key_size | default(acme_default_key_size) }}
+      {% else %}
+      --elliptic-curve secp{{ item.item.key_size | default(acme_default_key_size) }}r1
+      {% endif %}
+      {% if acme_preferred_chain | length > 0 %}
+      --preferred-chain "{{ acme_preferred_chain }}"
+      {% endif %}
+      {% if acme_force_renewal %}
+      --force-renewal
+      {% endif %}
+      {% if acme_dry_run %}
+      --dry-run
+      {% endif %}
+  vars:
+    _acme_server_url: >-
+      {% if acme_provider == 'custom' %}{{ acme_custom_server_url }}{% elif acme_staging %}{{ acme_provider_urls[acme_provider].staging }}{% else %}{{ acme_provider_urls[acme_provider].production }}{% endif %}
+    _acme_domain_flags: >-
+      {% for domain in item.item.domains %}-d {{ domain }} {% endfor %}
+  loop: "{{ acme_cert_check_results.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - (item.item.enabled | default(true))
+    - (item.item.challenge | default('http-01')) == 'standalone'
+    - item.rc != 0 or acme_force_renewal
+  changed_when: true
+  notify: run deploy hooks
+
+- name: Set Correct Permissions on Private Keys
+  ansible.builtin.file:
+    path: "{{ acme_cert_dir }}/{{ item.name }}/privkey.pem"
+    owner: "{{ acme_cert_owner }}"
+    group: "{{ acme_cert_group }}"
+    mode: "{{ acme_key_mode }}"
+  loop: "{{ acme_certificates | selectattr('enabled', 'undefined') | list +
+            acme_certificates | selectattr('enabled', 'defined') | selectattr('enabled', 'equalto', true) | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: not acme_dry_run
+  failed_when: false

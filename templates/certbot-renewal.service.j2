@@ -1,0 +1,19 @@
+{#- jinja2: lstrip_blocks: true, trim_blocks: true -#}
+# {{ ansible_managed }}
+
+[Unit]
+Description=Certbot certificate renewal
+Documentation=https://certbot.eff.org/docs/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{ acme_certbot_bin }} renew --quiet --deploy-hook "{{ acme_deploy_hook_dir }}/acme-combine-pem.sh"
+{% if acme_renewal_pre_hook | length > 0 %}
+ExecStartPre={{ acme_pre_hook_dir }}/acme-pre-hook.sh
+{% endif %}
+{% if acme_renewal_post_hook | length > 0 %}
+ExecStartPost={{ acme_post_hook_dir }}/acme-post-hook.sh
+{% endif %}
+PrivateTmp=true
