@@ -62,12 +62,21 @@
 # Cleanup: remove the method not in use
 # ----------------------------------------------------------------
 
+- name: Check If Crontab is Available
+  ansible.builtin.command:
+    cmd: which crontab
+  register: acme_crontab_check
+  changed_when: false
+  failed_when: false
+
 - name: Remove Cron Job When Using Systemd Timer
   ansible.builtin.cron:
     name: "certbot-renewal"
     cron_file: certbot-renewal
     state: absent
-  when: acme_renewal_method == 'systemd'
+  when:
+    - acme_renewal_method == 'systemd'
+    - acme_crontab_check.rc == 0
 
 - name: Disable Systemd Timer When Using Cron
   ansible.builtin.systemd:
