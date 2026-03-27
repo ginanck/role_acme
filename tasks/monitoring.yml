@@ -1,17 +1,111 @@
 ---
 # tasks/monitoring.yml - Deploy certificate monitoring and alerting
 
+- name: Build List of Managed Certificate Names
+  ansible.builtin.set_fact:
+    _acme_cert_names: >-
+      {{ (acme_certificates | selectattr('enabled', 'undefined') | list +
+          acme_certificates | selectattr('enabled', 'defined') | selectattr('enabled', 'equalto', true) | list)
+         | map(attribute='name') | list }}
+
 - name: Deploy Certificate Expiry Monitoring Script
-  ansible.builtin.template:
-    src: acme_cert_check.sh.j2
+  ansible.builtin.copy:
     dest: "{{ acme_monitoring_script_path }}"
     owner: root
     group: root
     mode: "0755"
+    content: |
+      #!/bin/bash
+      # Managed by Ansible role_acme — do not edit manually.
+      # Certificate expiry monitoring script.
+      # Exit codes: 0 = OK, 1 = WARNING, 2 = CRITICAL, 3 = UNKNOWN
+      set -euo pipefail
+
+      WARNING_DAYS="{{ acme_monitoring_warning_days }}"
+      CRITICAL_DAYS="{{ acme_monitoring_critical_days }}"
+      CERT_DIR="{{ acme_cert_dir }}"
+      CERT_NAMES=({{ _acme_cert_names | join(' ') }})
+      QUIET=false
+      JSON=false
+      NAGIOS=false
+      EXIT_CODE=0
+
+      while [[ $# -gt 0 ]]; do
+          case "$1" in
+              --quiet|-q) QUIET=true; shift ;;
+              --json|-j)  JSON=true; shift ;;
+              --nagios|-n) NAGIOS=true; shift ;;
+              *) echo "Unknown option: $1" >&2; exit 3 ;;
+          esac
+      done
+
+      declare -a NAMES=()
+      declare -a STATUSES=()
+      declare -a DAYS_LEFT=()
+      declare -a EXPIRIES=()
+      COUNT=0
+
+      for name in "${CERT_NAMES[@]}"; do
+          cert_path="${CERT_DIR}/${name}/fullchain.pem"
+          status="UNKNOWN"
+          days=0
+          expiry="unknown"
+
+          if [[ ! -f "${cert_path}" ]]; then
+              status="UNKNOWN"
+              [[ ${EXIT_CODE} -lt 3 ]] && EXIT_CODE=3
+          else
+              expiry_date=$(openssl x509 -in "${cert_path}" -noout -enddate 2>/dev/null | cut -d= -f2)
+              if [[ -z "${expiry_date}" ]]; then
+                  status="UNKNOWN"
+                  [[ ${EXIT_CODE} -lt 3 ]] && EXIT_CODE=3
+              else
+                  expiry_epoch=$(date -d "${expiry_date}" +%s 2>/dev/null || date -jf "%b %d %T %Y %Z" "${expiry_date}" +%s 2>/dev/null || echo 0)
+                  now_epoch=$(date +%s)
+                  days=$(( (expiry_epoch - now_epoch) / 86400 ))
+                  expiry="${expiry_date}"
+                  status="OK"
+                  if [[ ${days} -le ${CRITICAL_DAYS} ]]; then
+                      status="CRITICAL"
+                      [[ ${EXIT_CODE} -lt 2 ]] && EXIT_CODE=2
+                  elif [[ ${days} -le ${WARNING_DAYS} ]]; then
+                      status="WARNING"
+                      [[ ${EXIT_CODE} -lt 1 ]] && EXIT_CODE=1
+                  fi
+              fi
+          fi
+
+          NAMES+=("${name}")
+          STATUSES+=("${status}")
+          DAYS_LEFT+=("${days}")
+          EXPIRIES+=("${expiry}")
+          COUNT=$((COUNT + 1))
+      done
+
+      if ${JSON}; then
+          echo "["
+          for ((i=0; i<COUNT; i++)); do
+              comma=","
+              [[ $i -eq $((COUNT - 1)) ]] && comma=""
+              echo "  {\"name\":\"${NAMES[$i]}\",\"status\":\"${STATUSES[$i]}\",\"days_left\":${DAYS_LEFT[$i]},\"expiry\":\"${EXPIRIES[$i]}\"}${comma}"
+          done
+          echo "]"
+      elif ${NAGIOS}; then
+          for ((i=0; i<COUNT; i++)); do
+              echo "CERT ${STATUSES[$i]} - ${NAMES[$i]}: ${DAYS_LEFT[$i]} days until expiry"
+          done
+      else
+          for ((i=0; i<COUNT; i++)); do
+              if ${QUIET} && [[ "${STATUSES[$i]}" == "OK" ]]; then
+                  continue
+              fi
+              echo "[${STATUSES[$i]}] ${NAMES[$i]} — expires in ${DAYS_LEFT[$i]} days (${EXPIRIES[$i]})"
+          done
+      fi
+
+      exit ${EXIT_CODE}
 
 - name: Deploy Renewal Status Hook
-  # This deploy hook writes a timestamp and result to a status file
-  # after each renewal attempt, for external monitoring to consume.
   ansible.builtin.copy:
     dest: "{{ acme_deploy_hook_dir }}/acme-status-update.sh"
     owner: root
@@ -25,6 +119,13 @@
       echo "last_renewal=$(date -u +%Y-%m-%dT%H:%M:%SZ) domain=${RENEWED_DOMAINS:-unknown} status=ok" > "${STATUS_FILE}"
   when: acme_monitoring_status_file | length > 0
 
+- name: Check If Crontab is Available for Monitoring
+  ansible.builtin.command:
+    cmd: which crontab
+  register: acme_monitoring_crontab_check
+  changed_when: false
+  failed_when: false
+
 - name: Configure Certificate Check Cron Job
   ansible.builtin.cron:
     name: "acme-cert-expiry-check"
@@ -36,3 +137,4 @@
     user: root
     job: "{{ acme_monitoring_script_path }} --quiet >> {{ acme_renewal_log_file }} 2>&1"
     cron_file: acme-cert-check
+  when: acme_monitoring_crontab_check.rc == 0
