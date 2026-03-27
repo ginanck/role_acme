@@ -15,6 +15,7 @@
   failed_when: false
 
 - name: Backup Existing Certificates Before Renewal
+  when: acme_backup_enabled
   block:
     - name: Create Per-Certificate Backup Directory
       ansible.builtin.file:
@@ -29,15 +30,14 @@
       when: item.rc == 1
 
     - name: Archive Current Certificates
-      ansible.builtin.command:
-        cmd: >
-          tar czf {{ acme_backup_dir }}/{{ item.item.name }}/{{ item.item.name }}-{{ ansible_date_time.iso8601_basic_short }}.tar.gz
-          -C {{ acme_cert_dir }} {{ item.item.name }}
+      community.general.archive:
+        path: "{{ acme_cert_dir }}/{{ item.item.name }}"
+        dest: "{{ acme_backup_dir }}/{{ item.item.name }}/{{ item.item.name }}-{{ ansible_date_time.iso8601_basic_short }}.tar.gz"
+        format: gz
       loop: "{{ acme_cert_check_results.results }}"
       loop_control:
         label: "{{ item.item.name }}"
       when: item.rc == 1
-      changed_when: true
 
     - name: Clean Up Old Backups
       ansible.builtin.shell:
@@ -52,7 +52,6 @@
         label: "{{ item.item.name }}"
       when: item.rc == 1
       changed_when: false
-  when: acme_backup_enabled
 
 - name: Issue Certificates via HTTP-01 Webroot Challenge
   ansible.builtin.command:
