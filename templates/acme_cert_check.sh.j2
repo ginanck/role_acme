@@ -1,4 +1,4 @@
-{#- jinja2: lstrip_blocks: true, trim_blocks: true -#}
+#jinja2: lstrip_blocks: true, trim_blocks: true
 #!/bin/bash
 # {{ ansible_managed }}
 # Certificate expiry monitoring script for ACME-managed certificates.
@@ -19,6 +19,7 @@ JSON=false
 NAGIOS=false
 EXIT_CODE=0
 
+{% raw %}
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --quiet|-q) QUIET=true; shift ;;
@@ -68,6 +69,7 @@ check_cert() {
 
     RESULTS+=("{\"name\":\"${name}\",\"status\":\"${status}\",\"days_left\":${days_left},\"expiry\":\"${expiry_date}\",\"domains\":\"${domains}\"}")
 }
+{% endraw %}
 
 # Check all managed certificates
 {% for cert in acme_certificates %}
@@ -76,6 +78,7 @@ check_cert "{{ cert.name }}"
 {% endif %}
 {% endfor %}
 
+{% raw %}
 # Output results
 if ${JSON}; then
     echo "["
@@ -112,3 +115,4 @@ else
 fi
 
 exit ${EXIT_CODE}
+{% endraw %}
