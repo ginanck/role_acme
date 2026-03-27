@@ -1,0 +1,31 @@
+---
+# handlers file for role_acme
+
+- name: reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: enable certbot renewal timer
+  ansible.builtin.systemd:
+    name: certbot-renewal.timer
+    state: started
+    enabled: true
+
+- name: run deploy hooks
+  ansible.builtin.command:
+    cmd: >
+      run-parts {{ acme_deploy_hook_dir }}
+  changed_when: false
+  failed_when: false
+
+- name: reload nginx
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded
+  failed_when: false
+
+- name: reload haproxy
+  ansible.builtin.service:
+    name: haproxy
+    state: reloaded
+  failed_when: false

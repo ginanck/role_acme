@@ -1,0 +1,44 @@
+#!/bin/bash
+{#- jinja2: lstrip_blocks: true, trim_blocks: true -#}
+# {{ ansible_managed }}
+# Certbot deploy hook: combine fullchain+privkey into single PEM and reload services.
+# This script is called by certbot after each successful certificate renewal.
+set -euo pipefail
+
+CERT_DIR="{{ acme_cert_dir }}"
+LOG_FILE="{{ acme_renewal_log_file }}"
+
+log() {
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "${LOG_FILE}"
+}
+
+{% for cert in acme_certificates | selectattr('combine_pem', 'defined') | selectattr('combine_pem', 'equalto', true) | list %}
+# Certificate: {{ cert.name }}
+DOMAIN="{{ cert.name }}"
+PEM_DEST="{{ cert.combine_pem_path | default(acme_combined_pem_dir + '/' + cert.name + '.pem') }}"
+if [[ -f "${CERT_DIR}/${DOMAIN}/fullchain.pem" && -f "${CERT_DIR}/${DOMAIN}/privkey.pem" ]]; then
+    cat "${CERT_DIR}/${DOMAIN}/fullchain.pem" \
+        "${CERT_DIR}/${DOMAIN}/privkey.pem" \
+        > "${PEM_DEST}"
+    chmod {{ acme_combined_pem_mode }} "${PEM_DEST}"
+    chown {{ acme_cert_owner }}:{{ acme_cert_group }} "${PEM_DEST}"
+    log "Combined PEM updated for ${DOMAIN} -> ${PEM_DEST}"
+else
+    log "WARNING: cert files not found for ${DOMAIN}, skipping."
+fi
+
+{% endfor %}
+
+# Reload services that consume the certificates
+{% for cert in acme_certificates | selectattr('deploy_services', 'defined') | list %}
+{% for service in cert.deploy_services %}
+if systemctl is-active --quiet {{ service }}; then
+    systemctl reload {{ service }} && log "Reloaded {{ service }}" || log "ERROR: failed to reload {{ service }}"
+fi
+{% endfor %}
+{% endfor %}
+
+# Write status for monitoring
+{% if acme_monitoring_status_file | length > 0 %}
+echo "last_renewal=$(date -u +%Y-%m-%dT%H:%M:%SZ) domain=${RENEWED_DOMAINS:-combined} status=ok" > "{{ acme_monitoring_status_file }}"
+{% endif %}

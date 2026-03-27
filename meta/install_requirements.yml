@@ -1,0 +1,21 @@
+---
+
+roles:
+  - src: https://github.com/ginanck/role_base.git
+    version: master
+
+collections:
+  # Third Party Collections
+  # This docker collection required for molecule to be able to spin up new container
+  - name: community.docker
+    version: 4.8.1
+
+  # https://galaxy.ansible.com/ui/repo/published/community/general/docs/
+  # https://github.com/ansible-collections/community.general
+  - name: community.general
+    version: 6.6.1
+
+  # https://galaxy.ansible.com/ui/repo/published/ansible/posix/docs/
+  # https://github.com/ansible-collections/ansible.posix
+  - name: ansible.posix
+    version: 1.5.4

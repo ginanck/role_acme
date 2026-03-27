@@ -1,0 +1,66 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Check Certbot is Installed
+      ansible.builtin.command:
+        cmd: certbot --version
+      register: certbot_version
+      changed_when: false
+
+    - name: Assert Certbot is Available
+      ansible.builtin.assert:
+        that:
+          - certbot_version.rc == 0
+        fail_msg: "certbot is not installed or not in PATH"
+
+    - name: Check ACME Configuration Directory Exists
+      ansible.builtin.stat:
+        path: /etc/letsencrypt
+      register: acme_config_dir_stat
+
+    - name: Assert ACME Configuration Directory Exists
+      ansible.builtin.assert:
+        that:
+          - acme_config_dir_stat.stat.exists
+          - acme_config_dir_stat.stat.isdir
+
+    - name: Check Certbot CLI Configuration Exists
+      ansible.builtin.stat:
+        path: /etc/letsencrypt/cli.ini
+      register: certbot_cli_stat
+
+    - name: Assert Certbot CLI Configuration Exists
+      ansible.builtin.assert:
+        that:
+          - certbot_cli_stat.stat.exists
+
+    - name: Check Monitoring Script is Deployed
+      ansible.builtin.stat:
+        path: /usr/local/bin/acme-cert-check
+      register: monitoring_script_stat
+
+    - name: Assert Monitoring Script is Deployed
+      ansible.builtin.assert:
+        that:
+          - monitoring_script_stat.stat.exists
+          - monitoring_script_stat.stat.executable
+
+    - name: Check Renewal Hook Directories Exist
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: hook_dirs_stat
+      loop:
+        - /etc/letsencrypt/renewal-hooks/pre
+        - /etc/letsencrypt/renewal-hooks/post
+        - /etc/letsencrypt/renewal-hooks/deploy
+
+    - name: Assert Renewal Hook Directories Exist
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isdir
+      loop: "{{ hook_dirs_stat.results }}"
+      loop_control:
+        label: "{{ item.item }}"

@@ -1,0 +1,45 @@
+---
+# tasks/deploy.yml - Deploy combined PEM files for load balancers
+
+- name: Combine Fullchain and Private Key into Single PEM
+  # Concatenates fullchain.pem + privkey.pem into a single PEM file
+  # that HAProxy and similar load balancers can consume for SSL termination.
+  ansible.builtin.shell:
+    cmd: >
+      cat "{{ acme_cert_dir }}/{{ item.name }}/fullchain.pem"
+          "{{ acme_cert_dir }}/{{ item.name }}/privkey.pem"
+          > "{{ item.combine_pem_path | default(acme_combined_pem_dir + '/' + item.name + '.pem') }}"
+  args:
+    executable: /bin/bash
+  loop: "{{ acme_certificates | selectattr('combine_pem', 'defined') | selectattr('combine_pem', 'equalto', true) | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - (item.enabled | default(true))
+    - not acme_dry_run
+  changed_when: true
+  notify: run deploy hooks
+
+- name: Set Correct Permissions on Combined PEM Files
+  ansible.builtin.file:
+    path: "{{ item.combine_pem_path | default(acme_combined_pem_dir + '/' + item.name + '.pem') }}"
+    owner: "{{ acme_cert_owner }}"
+    group: "{{ acme_cert_group }}"
+    mode: "{{ acme_combined_pem_mode }}"
+  loop: "{{ acme_certificates | selectattr('combine_pem', 'defined') | selectattr('combine_pem', 'equalto', true) | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - (item.enabled | default(true))
+    - not acme_dry_run
+
+- name: Deploy Certificate Combine Script for Renewals
+  # This deploy hook runs after each successful certbot renewal and
+  # regenerates the combined PEM files, then reloads the consuming services.
+  ansible.builtin.template:
+    src: deploy_hook_combine.sh.j2
+    dest: "{{ acme_deploy_hook_dir }}/acme-combine-pem.sh"
+    owner: root
+    group: root
+    mode: "0755"
+  when: acme_certificates | selectattr('combine_pem', 'defined') | selectattr('combine_pem', 'equalto', true) | list | length > 0

@@ -1,0 +1,54 @@
+---
+dependency:
+  name: shell
+  command: |
+    ansible-galaxy role install -r meta/install_requirements.yml -p ./roles --force
+    ansible-galaxy collection install -r meta/install_requirements.yml -p ./collections --force
+driver:
+  name: docker
+platforms:
+  - name: almalinux-10
+    image: ghcr.io/ginanck/molecule-almalinux:10-latest
+    pre_build_image: true
+    privileged: true
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    command: /usr/sbin/init
+    tmpfs:
+      - /run
+      - /tmp
+      - /run/lock
+provisioner:
+  name: ansible
+  env:
+    ANSIBLE_ROLES_PATH: ../../roles:../../../
+    ANSIBLE_COLLECTIONS_PATH: ../../collections
+  inventory:
+    host_vars:
+      almalinux-10:
+        ansible_user: root
+        base_hostname: "almalinux-10"
+        acme_email: "test@example.com"
+        acme_staging: true
+        acme_certificates: []
+  playbooks:
+    converge: ../resources/converge.yml
+    prepare: ../resources/prepare.yml
+verifier:
+  name: ansible
+  options:
+    playbook: ../resources/verify.yml
+scenario:
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - side_effect
+    - verify
+    - cleanup
+    - destroy

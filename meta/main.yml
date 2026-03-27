@@ -1,0 +1,40 @@
+galaxy_info:
+  author: gkorkmaz
+  description: role_acme to manage ACME certificate issuance, deployment, and automated renewal
+
+  documented_requirements:
+    - src: https://github.com/ginanck/role_base.git
+      version: master
+    - name: community.docker
+      version: 4.8.1
+    - name: community.general
+      version: 6.6.1
+    - name: ansible.posix
+      version: 1.5.4
+
+  namespace: core
+  role_name: role_acme
+
+  license: license (GPL-2.0-or-later, MIT, etc)
+  min_ansible_version: "2.9"
+
+  platforms:
+  - name: Ubuntu
+    versions:
+    - jammy     # 22.04
+    - noble     # 24.04
+  - name: Debian
+    versions:
+    - bullseye  # 11
+    - bookworm  # 12
+  - name: AlmaLinux
+    versions:
+    - "9"
+    - "10"
+  - name: RockyLinux
+    versions:
+    - "9.0"
+    - "10"
+
+  galaxy_tags: []
+dependencies: []

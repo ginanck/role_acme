@@ -1,0 +1,72 @@
+---
+# tasks/validation.yml - Pre-flight validation checks
+
+- name: Assert ACME Email is Provided
+  ansible.builtin.assert:
+    that:
+      - acme_email | length > 0
+    fail_msg: "acme_email must be set to a valid email address for ACME account registration"
+
+- name: Assert ACME Provider is Valid
+  ansible.builtin.assert:
+    that:
+      - acme_provider in ['letsencrypt', 'zerossl', 'buypass', 'custom']
+    fail_msg: "acme_provider must be one of: letsencrypt, zerossl, buypass, custom — got: {{ acme_provider }}"
+
+- name: Assert Custom Server URL When Provider is Custom
+  ansible.builtin.assert:
+    that:
+      - acme_custom_server_url | length > 0
+    fail_msg: "acme_custom_server_url must be set when acme_provider is 'custom'"
+  when: acme_provider == 'custom'
+
+- name: Assert Certificate Definitions are Valid
+  ansible.builtin.assert:
+    that:
+      - item.name is defined
+      - item.name | length > 0
+      - item.domains is defined
+      - item.domains | length > 0
+      - (item.challenge | default('http-01')) in ['http-01', 'dns-01', 'standalone']
+      - (item.key_type | default(acme_default_key_type)) in ['rsa', 'ecdsa']
+    fail_msg: >
+      Certificate '{{ item.name | default("unnamed") }}' is invalid.
+      Each certificate must have a name, at least one domain, a valid challenge type
+      (http-01, dns-01, standalone), and a valid key type (rsa, ecdsa).
+  loop: "{{ acme_certificates }}"
+  loop_control:
+    label: "{{ item.name | default('unnamed') }}"
+
+- name: Assert Wildcard Certificates Use DNS-01 Challenge
+  ansible.builtin.assert:
+    that:
+      - (item.challenge | default('http-01')) == 'dns-01'
+    fail_msg: >
+      Certificate '{{ item.name }}' requests a wildcard but does not use dns-01 challenge.
+      Wildcard certificates require DNS-01 validation.
+  loop: "{{ acme_certificates | selectattr('wildcard', 'defined') | selectattr('wildcard', 'equalto', true) | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Assert DNS-01 Provider is Set When DNS Challenge is Used
+  ansible.builtin.assert:
+    that:
+      - acme_dns01_provider | length > 0
+    fail_msg: "acme_dns01_provider must be set when any certificate uses dns-01 challenge"
+  when: acme_certificates | selectattr('challenge', 'defined') | selectattr('challenge', 'equalto', 'dns-01') | list | length > 0
+
+- name: Assert Renewal Method is Valid
+  ansible.builtin.assert:
+    that:
+      - acme_renewal_method in ['cron', 'systemd']
+    fail_msg: "acme_renewal_method must be 'cron' or 'systemd', got: {{ acme_renewal_method }}"
+  when: acme_renewal_enabled
+
+- name: Assert Default Key Size is Valid for Key Type
+  ansible.builtin.assert:
+    that:
+      - (acme_default_key_type == 'rsa' and acme_default_key_size | int in [2048, 4096]) or
+        (acme_default_key_type == 'ecdsa' and acme_default_key_size | int in [256, 384])
+    fail_msg: >
+      Invalid key size {{ acme_default_key_size }} for key type {{ acme_default_key_type }}.
+      RSA supports 2048 or 4096, ECDSA supports 256 or 384.

@@ -1,0 +1,20 @@
+---
+# tasks/install-RedHat.yml - Install certbot on RedHat/AlmaLinux/Rocky
+
+- name: Install EPEL Repository
+  ansible.builtin.dnf:
+    name: epel-release
+    state: present
+
+- name: Install Certbot Packages
+  ansible.builtin.dnf:
+    name: "{{ acme_certbot_packages }}"
+    state: present
+
+- name: Install Certbot DNS Plugin Package
+  ansible.builtin.dnf:
+    name: "{{ acme_certbot_dns_packages[acme_dns01_provider] }}"
+    state: present
+  when:
+    - acme_dns01_provider | length > 0
+    - acme_dns01_provider in acme_certbot_dns_packages

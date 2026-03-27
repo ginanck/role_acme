@@ -1,0 +1,17 @@
+---
+# tasks/install-Debian.yml - Install certbot on Debian/Ubuntu
+
+- name: Install Certbot Packages
+  ansible.builtin.apt:
+    name: "{{ acme_certbot_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install Certbot DNS Plugin Package
+  ansible.builtin.apt:
+    name: "{{ acme_certbot_dns_packages[acme_dns01_provider] }}"
+    state: present
+  when:
+    - acme_dns01_provider | length > 0
+    - acme_dns01_provider in acme_certbot_dns_packages
