@@ -140,6 +140,19 @@
   changed_when: true
   notify: run deploy hooks
 
+- name: Check If Port 80 Is Already In Use
+  ansible.builtin.command:
+    cmd: ss -tlnp sport = :80
+  register: _acme_port80_check
+  changed_when: false
+  failed_when: false
+
+- name: Determine Standalone Issuance Port
+  ansible.builtin.set_fact:
+    _acme_issue_port: >-
+      {{ (acme_standalone_http_port if (_acme_port80_check.stdout | default('') | regex_search('LISTEN'))
+          else 80) | int }}
+
 - name: Issue Certificates via Standalone Challenge
   ansible.builtin.command:
     cmd: >
@@ -150,7 +163,7 @@
       --server {{ _acme_server_url }}
       --standalone
       --preferred-challenges http
-      --http-01-port {{ acme_standalone_http_port }}
+      --http-01-port {{ _acme_issue_port }}
       --cert-name {{ item.item.name }}
       {{ _acme_domain_flags }}
       --key-type {{ item.item.key_type | default(acme_default_key_type) }}
@@ -182,6 +195,19 @@
     - item.rc != 0 or acme_force_renewal
   changed_when: true
   notify: run deploy hooks
+
+- name: Set Renewal Port in Certbot Config for Future Renewals
+  ansible.builtin.lineinfile:
+    path: "{{ acme_renewal_config_dir }}/{{ item.item.name }}.conf"
+    regexp: '^http01_port\s*='
+    line: "http01_port = {{ acme_standalone_renewal_port | default(acme_standalone_http_port, true) }}"
+  loop: "{{ acme_cert_check_results.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - (item.item.enabled | default(true))
+    - (item.item.challenge | default('http-01')) == 'standalone'
+    - not acme_dry_run
 
 - name: Set Correct Permissions on Private Keys
   ansible.builtin.file:

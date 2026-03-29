@@ -1,36 +1,49 @@
 ---
 # tasks/deploy.yml - Deploy combined PEM files for load balancers
 
-- name: Combine Fullchain and Private Key into Single PEM
-  # Concatenates fullchain.pem + privkey.pem into a single PEM file
-  # that HAProxy and similar load balancers can consume for SSL termination.
-  ansible.builtin.shell:
-    cmd: >
-      cat "{{ acme_cert_dir }}/{{ item.name }}/fullchain.pem"
-          "{{ acme_cert_dir }}/{{ item.name }}/privkey.pem"
-          > "{{ item.combine_pem_path | default(acme_combined_pem_dir + '/' + item.name + '.pem') }}"
-  args:
-    executable: /bin/bash
+- name: Validate Source Certificate Files Before Combining
+  ansible.builtin.command:
+    cmd: openssl x509 -in "{{ acme_cert_dir }}/{{ item.name }}/fullchain.pem" -noout -subject
+  register: _acme_source_cert_check
   loop: "{{ acme_certificates | selectattr('combine_pem', 'defined') | selectattr('combine_pem', 'equalto', true) | list }}"
   loop_control:
     label: "{{ item.name }}"
   when:
     - (item.enabled | default(true))
     - not acme_dry_run
+  changed_when: false
+  failed_when: false
+
+- name: Combine Fullchain and Private Key into Single PEM
+  # Concatenates fullchain.pem + privkey.pem into a single PEM file
+  # that HAProxy and similar load balancers can consume for SSL termination.
+  ansible.builtin.shell:
+    cmd: >-
+      cat "{{ acme_cert_dir }}/{{ item.item.name }}/fullchain.pem"
+      "{{ acme_cert_dir }}/{{ item.item.name }}/privkey.pem"
+      > "{{ item.item.combine_pem_path | default(acme_combined_pem_dir + '/' + item.item.name + '.pem') }}"
+  args:
+    executable: /bin/bash
+  loop: "{{ _acme_source_cert_check.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - item.rc == 0
+    - not acme_dry_run
   changed_when: true
   notify: run deploy hooks
 
 - name: Set Correct Permissions on Combined PEM Files
   ansible.builtin.file:
-    path: "{{ item.combine_pem_path | default(acme_combined_pem_dir + '/' + item.name + '.pem') }}"
+    path: "{{ item.item.combine_pem_path | default(acme_combined_pem_dir + '/' + item.item.name + '.pem') }}"
     owner: "{{ acme_cert_owner }}"
     group: "{{ acme_cert_group }}"
     mode: "{{ acme_combined_pem_mode }}"
-  loop: "{{ acme_certificates | selectattr('combine_pem', 'defined') | selectattr('combine_pem', 'equalto', true) | list }}"
+  loop: "{{ _acme_source_cert_check.results }}"
   loop_control:
-    label: "{{ item.name }}"
+    label: "{{ item.item.name }}"
   when:
-    - (item.enabled | default(true))
+    - item.rc == 0
     - not acme_dry_run
 
 - name: Deploy Certificate Combine Script for Renewals

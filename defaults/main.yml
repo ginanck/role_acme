@@ -79,6 +79,14 @@ acme_http01_webroot_mode: "0755"
 # Port for certbot standalone HTTP server (used when challenge is "standalone")
 acme_standalone_http_port: 80
 
+# Port that certbot should use for future renewals (written to renewal config).
+# Set this when a reverse proxy (e.g., HAProxy) will front port 80 after initial
+# issuance and proxy ACME challenges to certbot on a different port.
+# When empty, the role auto-detects: if port 80 is free at issuance time it uses
+# port 80, then writes acme_standalone_http_port to the renewal config so future
+# renewals work behind the reverse proxy.
+acme_standalone_renewal_port: ""
+
 # --- DNS-01 Challenge ---
 # DNS provider plugin for certbot (e.g., cloudflare, route53, digitalocean, google, rfc2136)
 acme_dns01_provider: ""
