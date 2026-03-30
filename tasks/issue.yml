@@ -140,20 +140,99 @@
   changed_when: true
   notify: run deploy hooks
 
-- name: Check If Port 80 Is Already In Use
-  ansible.builtin.command:
-    cmd: ss -tlnp sport = :80
-  register: _acme_port80_check
-  changed_when: false
-  failed_when: false
-
-- name: Determine Standalone Issuance Port
+- name: Determine Standalone Certificates Needing Issuance
   ansible.builtin.set_fact:
-    _acme_issue_port: >-
-      {{ (acme_standalone_http_port if (_acme_port80_check.stdout | default('') | regex_search('LISTEN'))
-          else 80) | int }}
+    _acme_standalone_certs_needed: >-
+      {{ acme_cert_check_results.results
+         | selectattr('item.challenge', 'defined')
+         | selectattr('item.challenge', 'equalto', 'standalone')
+         | rejectattr('item.enabled', 'defined')
+         | list
+         +
+         acme_cert_check_results.results
+         | selectattr('item.challenge', 'defined')
+         | selectattr('item.challenge', 'equalto', 'standalone')
+         | selectattr('item.enabled', 'defined')
+         | selectattr('item.enabled', 'equalto', true)
+         | list }}
 
-- name: Issue Certificates via Standalone Challenge
+- name: Check Which Standalone Certificates Already Exist
+  ansible.builtin.stat:
+    path: "{{ acme_cert_dir }}/{{ item.item.name }}/fullchain.pem"
+  register: _acme_standalone_cert_exists
+  loop: "{{ _acme_standalone_certs_needed }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Initial Issuance of Standalone Certificates via Port 80
+  when: _acme_standalone_cert_exists.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+  block:
+    - name: Check If Port 80 Is Already In Use
+      ansible.builtin.command:
+        cmd: ss -tlnp sport = :80
+      register: _acme_port80_check
+      changed_when: false
+      failed_when: false
+
+    - name: Identify Service Using Port 80
+      ansible.builtin.set_fact:
+        _acme_port80_service: >-
+          {{ _acme_port80_check.stdout | default('')
+             | regex_search('users:\(\("([^"]+)"', '\1')
+             | default([], true) | first | default('') }}
+      when: _acme_port80_check.stdout | default('') | regex_search('LISTEN')
+
+    - name: Stop Service Using Port 80 for Initial Certificate Issuance
+      ansible.builtin.systemd:
+        name: "{{ _acme_port80_service }}"
+        state: stopped
+      when: _acme_port80_service | default('') | length > 0
+
+    - name: Issue New Standalone Certificates on Port 80
+      ansible.builtin.command:
+        cmd: >
+          {{ acme_certbot_bin }} certonly
+          --non-interactive
+          --agree-tos
+          --email {{ acme_email }}
+          --server {{ _acme_server_url }}
+          --standalone
+          --preferred-challenges http
+          --http-01-port 80
+          --cert-name {{ item.item.item.name }}
+          {{ _acme_domain_flags }}
+          --key-type {{ item.item.item.key_type | default(acme_default_key_type) }}
+          {% if (item.item.item.key_type | default(acme_default_key_type)) == 'rsa' %}
+          --rsa-key-size {{ item.item.item.key_size | default(acme_default_key_size) }}
+          {% else %}
+          --elliptic-curve secp{{ item.item.item.key_size | default(acme_default_key_size) }}r1
+          {% endif %}
+          {% if acme_preferred_chain | length > 0 %}
+          --preferred-chain "{{ acme_preferred_chain }}"
+          {% endif %}
+          {% if acme_dry_run %}
+          --dry-run
+          {% endif %}
+      vars:
+        _acme_server_url: >-
+          {% if acme_provider == 'custom' %}{{ acme_custom_server_url }}{% elif acme_staging %}{{ acme_provider_urls[acme_provider].staging }}{% else %}{{ acme_provider_urls[acme_provider].production }}{% endif %}
+        _acme_domain_flags: >-
+          {% for domain in item.item.item.domains %}-d {{ domain }} {% endfor %}
+      loop: "{{ _acme_standalone_cert_exists.results }}"
+      loop_control:
+        label: "{{ item.item.item.name }}"
+      when: not item.stat.exists
+      changed_when: true
+      notify: run deploy hooks
+
+  always:
+    - name: Restart Service That Was Using Port 80
+      ansible.builtin.systemd:
+        name: "{{ _acme_port80_service }}"
+        state: started
+      when: _acme_port80_service | default('') | length > 0
+
+- name: Renew Expiring Standalone Certificates via Configured Port
   ansible.builtin.command:
     cmd: >
       {{ acme_certbot_bin }} certonly
@@ -163,7 +242,7 @@
       --server {{ _acme_server_url }}
       --standalone
       --preferred-challenges http
-      --http-01-port {{ _acme_issue_port }}
+      --http-01-port {{ acme_standalone_renewal_port | default(acme_standalone_http_port, true) }}
       --cert-name {{ item.item.name }}
       {{ _acme_domain_flags }}
       --key-type {{ item.item.key_type | default(acme_default_key_type) }}
@@ -186,13 +265,12 @@
       {% if acme_provider == 'custom' %}{{ acme_custom_server_url }}{% elif acme_staging %}{{ acme_provider_urls[acme_provider].staging }}{% else %}{{ acme_provider_urls[acme_provider].production }}{% endif %}
     _acme_domain_flags: >-
       {% for domain in item.item.domains %}-d {{ domain }} {% endfor %}
-  loop: "{{ acme_cert_check_results.results }}"
+  loop: "{{ _acme_standalone_certs_needed }}"
   loop_control:
     label: "{{ item.item.name }}"
   when:
-    - (item.item.enabled | default(true))
-    - (item.item.challenge | default('http-01')) == 'standalone'
-    - item.rc != 0 or acme_force_renewal
+    - (item.rc != 0 or acme_force_renewal)
+    - item.stderr | default('') is not search('No such file or directory')
   changed_when: true
   notify: run deploy hooks
 
