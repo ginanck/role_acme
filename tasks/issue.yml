@@ -287,6 +287,22 @@
     - (item.item.challenge | default('http-01')) == 'standalone'
     - not acme_dry_run
 
+- name: Set Automatic Renewal Threshold in Certbot Config
+  # Injects `renew_before_expiry = N days` into certbot's own renewal config so
+  # the systemd timer renews N days before expiry. Per-cert `renew_before_expiry`
+  # overrides the role-wide acme_renewal_days_before_expiry default.
+  ansible.builtin.lineinfile:
+    path: "{{ acme_renewal_config_dir }}/{{ item.item.name }}.conf"
+    regexp: '^renew_before_expiry\s*='
+    line: "renew_before_expiry = {{ item.item.renew_before_expiry | default(acme_renewal_days_before_expiry) }} days"
+    insertafter: '^\[renewalparams\]'
+  loop: "{{ acme_cert_check_results.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - (item.item.enabled | default(true))
+    - not acme_dry_run
+
 - name: Set Correct Permissions on Private Keys
   ansible.builtin.file:
     path: "{{ acme_cert_dir }}/{{ item.name }}/privkey.pem"

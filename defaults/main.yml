@@ -188,7 +188,14 @@ acme_renewal_systemd_calendar: "*-*-* 00,12:00:00"
 acme_renewal_systemd_random_delay: "43200"
 acme_renewal_systemd_persistent: true
 
-# Number of days before expiry to trigger renewal
+# Number of days before expiry to trigger renewal. Single source of truth for
+# BOTH renewal triggers:
+#   - the openssl pre-flight check during an Ansible playbook run (issue.yml), and
+#   - certbot's automatic systemd-timer renewals, via `renew_before_expiry = N days`
+#     written into each certificate's renewal config.
+# Default 30 leaves a safety buffer for failed renewal attempts — lowering this
+# (e.g. to 10) shrinks that buffer and is not recommended for production.
+# Can be overridden per certificate via `renew_before_expiry` on the cert entry.
 acme_renewal_days_before_expiry: 30
 
 # ================================================================
