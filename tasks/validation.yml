@@ -48,6 +48,37 @@
   loop_control:
     label: "{{ item.name }}"
 
+- name: Assert Certificates With Deploy Services Are Wired for Propagation
+  ansible.builtin.assert:
+    that:
+      - item.combine_pem | default(false) | bool
+    fail_msg: >
+      Certificate '{{ item.name }}' declares deploy_services
+      ({{ item.deploy_services | join(', ') }}) but combine_pem is not true.
+      Without combine_pem the renewed certificate is never written to
+      {{ acme_combined_pem_dir }}, so the service keeps serving the OLD
+      certificate after each renewal. Set 'combine_pem: true' on this certificate.
+  loop: "{{ acme_certificates | selectattr('deploy_services', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Warn When Combined Certificates Have No Service to Reload
+  ansible.builtin.debug:
+    msg: >
+      WARNING: Certificate '{{ item.name }}' sets combine_pem but defines no
+      deploy_services. The combined PEM in {{ acme_combined_pem_dir }} will be
+      refreshed on renewal, but no service is reloaded — consumers keep the old
+      certificate in memory until manually reloaded. Add 'deploy_services' (e.g.
+      [haproxy]) if a service serves this certificate.
+  loop: >-
+    {{ acme_certificates
+       | selectattr('combine_pem', 'defined')
+       | selectattr('combine_pem', 'equalto', true)
+       | rejectattr('deploy_services', 'defined')
+       | list }}
+  loop_control:
+    label: "{{ item.name }}"
+
 - name: Assert DNS-01 Provider is Set When DNS Challenge is Used
   ansible.builtin.assert:
     that:

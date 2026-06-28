@@ -1,12 +1,17 @@
 #!/bin/bash
-{#- jinja2: lstrip_blocks: true, trim_blocks: true -#}
+{# jinja2: lstrip_blocks: true, trim_blocks: true -#}
 # {{ ansible_managed }}
 # Certbot deploy hook: combine fullchain+privkey into single PEM and reload services.
 # This script is called by certbot after each successful certificate renewal.
-set -euo pipefail
+#
+# Note: intentionally NOT using `set -e`. Every step is checked explicitly so that
+# a single failure does not abort the script before the monitoring status is written.
+# The script reports its real outcome via the status file and exit code.
+set -uo pipefail
 
 CERT_DIR="{{ acme_cert_dir }}"
 LOG_FILE="{{ acme_renewal_log_file }}"
+hook_rc=0
 
 log() {
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "${LOG_FILE}"
@@ -17,28 +22,56 @@ log() {
 DOMAIN="{{ cert.name }}"
 PEM_DEST="{{ cert.combine_pem_path | default(acme_combined_pem_dir + '/' + cert.name + '.pem') }}"
 if [[ -f "${CERT_DIR}/${DOMAIN}/fullchain.pem" && -f "${CERT_DIR}/${DOMAIN}/privkey.pem" ]]; then
-    cat "${CERT_DIR}/${DOMAIN}/fullchain.pem" \
-        "${CERT_DIR}/${DOMAIN}/privkey.pem" \
-        > "${PEM_DEST}"
-    chmod {{ acme_combined_pem_mode }} "${PEM_DEST}"
-    chown {{ acme_cert_owner }}:{{ acme_cert_group }} "${PEM_DEST}"
-    log "Combined PEM updated for ${DOMAIN} -> ${PEM_DEST}"
+    if cat "${CERT_DIR}/${DOMAIN}/fullchain.pem" \
+           "${CERT_DIR}/${DOMAIN}/privkey.pem" > "${PEM_DEST}.tmp" \
+        && chmod {{ acme_combined_pem_mode }} "${PEM_DEST}.tmp" \
+        && chown {{ acme_cert_owner }}:{{ acme_cert_group }} "${PEM_DEST}.tmp" \
+        && mv -f "${PEM_DEST}.tmp" "${PEM_DEST}"; then
+        log "Combined PEM updated for ${DOMAIN} -> ${PEM_DEST}"
+    else
+        log "ERROR: failed to write combined PEM for ${DOMAIN}"
+        rm -f "${PEM_DEST}.tmp"
+        hook_rc=1
+    fi
 else
     log "WARNING: cert files not found for ${DOMAIN}, skipping."
+    hook_rc=1
 fi
 
 {% endfor %}
-
 # Reload services that consume the certificates
 {% for cert in acme_certificates | selectattr('deploy_services', 'defined') | list %}
 {% for service in cert.deploy_services %}
 if systemctl is-active --quiet {{ service }}; then
-    systemctl reload {{ service }} && log "Reloaded {{ service }}" || log "ERROR: failed to reload {{ service }}"
+{% if service == 'haproxy' %}
+    if ! haproxy -c -f /etc/haproxy/haproxy.cfg >/dev/null 2>&1; then
+        log "ERROR: haproxy config check failed, skipping reload of {{ service }}"
+        hook_rc=1
+    elif systemctl reload {{ service }}; then
+        log "Reloaded {{ service }}"
+    else
+        log "ERROR: failed to reload {{ service }}"
+        hook_rc=1
+    fi
+{% else %}
+    if systemctl reload {{ service }}; then
+        log "Reloaded {{ service }}"
+    else
+        log "ERROR: failed to reload {{ service }}"
+        hook_rc=1
+    fi
+{% endif %}
 fi
 {% endfor %}
 {% endfor %}
 
-# Write status for monitoring
+# Write status for monitoring — reflects the ACTUAL outcome, not a blanket "ok"
 {% if acme_monitoring_status_file | length > 0 %}
-echo "last_renewal=$(date -u +%Y-%m-%dT%H:%M:%SZ) domain=${RENEWED_DOMAINS:-combined} status=ok" > "{{ acme_monitoring_status_file }}"
+if [[ ${hook_rc} -eq 0 ]]; then
+    echo "last_renewal=$(date -u +%Y-%m-%dT%H:%M:%SZ) domain=${RENEWED_DOMAINS:-combined} status=ok" > "{{ acme_monitoring_status_file }}"
+else
+    echo "last_renewal=$(date -u +%Y-%m-%dT%H:%M:%SZ) domain=${RENEWED_DOMAINS:-combined} status=error" > "{{ acme_monitoring_status_file }}"
+fi
 {% endif %}
+
+exit ${hook_rc}
