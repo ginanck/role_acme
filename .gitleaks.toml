@@ -1,0 +1,12 @@
+# Gitleaks configuration
+#
+# The dependency/ directory is recreated by the molecule dependency step and
+# contains third-party roles and collections that are never committed.
+# Keep the default rule set and exclude that directory from all scans.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "molecule dependency installs (roles and collections)"
+paths = ['''^(\./)?dependency/''']

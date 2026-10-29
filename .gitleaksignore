@@ -1,0 +1,9 @@
+# Gitleaks ignore file for test/example configurations
+# These are example passwords used for testing and demonstration purposes only
+#
+# This file only silences individual findings (path:rule:line).
+# Directory-wide exclusions (for example dependency/) live in .gitleaks.toml.
+
+docs/management.txt:generic-api-key:3536
+docs/management.txt:generic-api-key:3540
+docs/management.txt:generic-api-key:3554

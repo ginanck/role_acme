@@ -1,0 +1,52 @@
+---
+dependency:
+  name: shell
+  command: |
+    set -eu
+    rm -rf "${MOLECULE_PROJECT_DIRECTORY}/dependency"
+    ansible-galaxy role install -r "${MOLECULE_PROJECT_DIRECTORY}/meta/install_requirements.yml" -p "${MOLECULE_PROJECT_DIRECTORY}/dependency/roles"
+    ansible-galaxy collection install -r "${MOLECULE_PROJECT_DIRECTORY}/meta/install_requirements.yml" -p "${MOLECULE_PROJECT_DIRECTORY}/dependency/collections"
+driver:
+  name: docker
+platforms:
+  - name: rockylinux-9
+    image: ghcr.io/ginanck/molecule-rockylinux:9-latest
+    pre_build_image: true
+    privileged: true
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    command: /usr/sbin/init
+    tmpfs:
+      - /run
+      - /tmp
+      - /run/lock
+provisioner:
+  name: ansible
+  env:
+    ANSIBLE_ROLES_PATH: ${MOLECULE_PROJECT_DIRECTORY}/dependency/roles:${MOLECULE_PROJECT_DIRECTORY}/..
+    ANSIBLE_COLLECTIONS_PATH: ${MOLECULE_PROJECT_DIRECTORY}/dependency/collections
+  inventory:
+    host_vars:
+      rockylinux-9:
+        ansible_user: root
+        base_hostname: "rockylinux-9"
+  playbooks:
+    converge: ../resources/converge.yml
+    prepare: ../resources/prepare.yml
+    verify: ../resources/verify.yml
+verifier:
+  name: ansible
+scenario:
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - side_effect
+    - verify
+    - cleanup
+    - destroy

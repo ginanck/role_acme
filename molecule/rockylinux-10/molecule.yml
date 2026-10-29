@@ -2,8 +2,10 @@
 dependency:
   name: shell
   command: |
-    ansible-galaxy role install -r meta/install_requirements.yml -p ./roles --force
-    ansible-galaxy collection install -r meta/install_requirements.yml -p ./collections --force
+    set -eu
+    rm -rf "${MOLECULE_PROJECT_DIRECTORY}/dependency"
+    ansible-galaxy role install -r "${MOLECULE_PROJECT_DIRECTORY}/meta/install_requirements.yml" -p "${MOLECULE_PROJECT_DIRECTORY}/dependency/roles"
+    ansible-galaxy collection install -r "${MOLECULE_PROJECT_DIRECTORY}/meta/install_requirements.yml" -p "${MOLECULE_PROJECT_DIRECTORY}/dependency/collections"
 driver:
   name: docker
 platforms:
@@ -22,23 +24,19 @@ platforms:
 provisioner:
   name: ansible
   env:
-    ANSIBLE_ROLES_PATH: ../../roles:../../../
-    ANSIBLE_COLLECTIONS_PATH: ../../collections
+    ANSIBLE_ROLES_PATH: ${MOLECULE_PROJECT_DIRECTORY}/dependency/roles:${MOLECULE_PROJECT_DIRECTORY}/..
+    ANSIBLE_COLLECTIONS_PATH: ${MOLECULE_PROJECT_DIRECTORY}/dependency/collections
   inventory:
     host_vars:
       rockylinux-10:
         ansible_user: root
         base_hostname: "rockylinux-10"
-        acme_email: "test@example.com"
-        acme_staging: true
-        acme_certificates: []
   playbooks:
     converge: ../resources/converge.yml
     prepare: ../resources/prepare.yml
+    verify: ../resources/verify.yml
 verifier:
   name: ansible
-  options:
-    playbook: ../resources/verify.yml
 scenario:
   test_sequence:
     - dependency
