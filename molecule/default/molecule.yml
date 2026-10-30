@@ -4,12 +4,12 @@ dependency:
   command: |
     set -eu
     rm -rf "${MOLECULE_PROJECT_DIRECTORY}/dependency"
-    ansible-galaxy role install -r "${MOLECULE_PROJECT_DIRECTORY}/meta/install_requirements.yml" -p "${MOLECULE_PROJECT_DIRECTORY}/dependency/roles"
-    ansible-galaxy collection install -r "${MOLECULE_PROJECT_DIRECTORY}/meta/install_requirements.yml" -p "${MOLECULE_PROJECT_DIRECTORY}/dependency/collections"
+    ansible-galaxy role install -r "${MOLECULE_PROJECT_DIRECTORY}/meta/install_requirements.yml" -p "${MOLECULE_PROJECT_DIRECTORY}/dependency/roles" --force
+    ansible-galaxy collection install -r "${MOLECULE_PROJECT_DIRECTORY}/meta/install_requirements.yml" -p "${MOLECULE_PROJECT_DIRECTORY}/dependency/collections" --force
 driver:
   name: docker
 platforms:
-  - name: rockylinux-8
+  - name: default
     image: ghcr.io/ginanck/molecule-rockylinux:8-latest
     pre_build_image: true
     privileged: true
@@ -28,9 +28,9 @@ provisioner:
     ANSIBLE_COLLECTIONS_PATH: ${MOLECULE_PROJECT_DIRECTORY}/dependency/collections
   inventory:
     host_vars:
-      rockylinux-8:
+      default:
         ansible_user: root
-        base_hostname: "rockylinux-8"
+        base_hostname: "default"
   playbooks:
     converge: ../resources/converge.yml
     prepare: ../resources/prepare.yml

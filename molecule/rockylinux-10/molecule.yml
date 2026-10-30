@@ -4,8 +4,8 @@ dependency:
   command: |
     set -eu
     rm -rf "${MOLECULE_PROJECT_DIRECTORY}/dependency"
-    ansible-galaxy role install -r "${MOLECULE_PROJECT_DIRECTORY}/meta/install_requirements.yml" -p "${MOLECULE_PROJECT_DIRECTORY}/dependency/roles"
-    ansible-galaxy collection install -r "${MOLECULE_PROJECT_DIRECTORY}/meta/install_requirements.yml" -p "${MOLECULE_PROJECT_DIRECTORY}/dependency/collections"
+    ansible-galaxy role install -r "${MOLECULE_PROJECT_DIRECTORY}/meta/install_requirements.yml" -p "${MOLECULE_PROJECT_DIRECTORY}/dependency/roles" --force
+    ansible-galaxy collection install -r "${MOLECULE_PROJECT_DIRECTORY}/meta/install_requirements.yml" -p "${MOLECULE_PROJECT_DIRECTORY}/dependency/collections" --force
 driver:
   name: docker
 platforms:
