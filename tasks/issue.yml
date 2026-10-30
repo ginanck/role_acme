@@ -34,6 +34,7 @@
         path: "{{ acme_cert_dir }}/{{ item.item.name }}"
         dest: "{{ acme_backup_dir }}/{{ item.item.name }}/{{ item.item.name }}-{{ ansible_date_time.iso8601_basic_short }}.tar.gz"
         format: gz
+        mode: "0600"
       loop: "{{ acme_cert_check_results.results }}"
       loop_control:
         label: "{{ item.item.name }}"
@@ -61,6 +62,7 @@
       --agree-tos
       --email {{ acme_email }}
       --server {{ _acme_server_url }}
+      {{ _acme_eab_flags }}
       --webroot
       --webroot-path {{ acme_http01_webroot }}
       --cert-name {{ item.item.name }}
@@ -93,6 +95,8 @@
     - (item.item.challenge | default('http-01')) == 'http-01'
     - item.rc != 0 or acme_force_renewal
   changed_when: true
+  environment: "{{ _acme_certbot_environment }}"
+  no_log: "{{ _acme_eab_configured }}"
   notify: run deploy hooks
 
 - name: Issue Certificates via DNS-01 Challenge
@@ -103,6 +107,7 @@
       --agree-tos
       --email {{ acme_email }}
       --server {{ _acme_server_url }}
+      {{ _acme_eab_flags }}
       --dns-{{ acme_dns01_provider }}
       {% if acme_dns01_credentials_file | length > 0 %}
       --dns-{{ acme_dns01_provider }}-credentials {{ acme_dns01_credentials_file }}
@@ -138,6 +143,8 @@
     - (item.item.challenge | default('http-01')) == 'dns-01'
     - item.rc != 0 or acme_force_renewal
   changed_when: true
+  environment: "{{ _acme_certbot_environment }}"
+  no_log: "{{ _acme_eab_configured }}"
   notify: run deploy hooks
 
 - name: Determine Standalone Certificates Needing Issuance
@@ -196,6 +203,7 @@
           --agree-tos
           --email {{ acme_email }}
           --server {{ _acme_server_url }}
+          {{ _acme_eab_flags }}
           --standalone
           --preferred-challenges http
           --http-01-port 80
@@ -223,6 +231,8 @@
         label: "{{ item.item.item.name }}"
       when: not item.stat.exists
       changed_when: true
+      environment: "{{ _acme_certbot_environment }}"
+      no_log: "{{ _acme_eab_configured }}"
       notify: run deploy hooks
 
   always:
@@ -240,6 +250,7 @@
       --agree-tos
       --email {{ acme_email }}
       --server {{ _acme_server_url }}
+      {{ _acme_eab_flags }}
       --standalone
       --preferred-challenges http
       --http-01-port {{ acme_standalone_renewal_port | default(acme_standalone_http_port, true) }}
@@ -272,6 +283,8 @@
     - (item.rc != 0 or acme_force_renewal)
     - item.stderr | default('') is not search('No such file or directory')
   changed_when: true
+  environment: "{{ _acme_certbot_environment }}"
+  no_log: "{{ _acme_eab_configured }}"
   notify: run deploy hooks
 
 - name: Set Renewal Port in Certbot Config for Future Renewals

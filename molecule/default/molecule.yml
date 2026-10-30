@@ -10,7 +10,7 @@ driver:
   name: docker
 platforms:
   - name: default
-    image: ghcr.io/ginanck/molecule-rockylinux:8-latest
+    image: ghcr.io/ginanck/molecule-rockylinux:9-latest
     pre_build_image: true
     privileged: true
     volumes:

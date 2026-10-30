@@ -1,5 +1,16 @@
 ---
-# tasks/renewal.yml - Configure automated certificate renewal
+# tasks/renewal.yml - Configure exactly one automated certificate renewal path
+#
+# A host must never run two renewal mechanisms. Whichever mechanism the operator
+# selects, every other certbot renewal trigger (the vendor timer shipped by the
+# certbot package, and the role's own timer when cron is selected) is disabled
+# and masked so a package update cannot silently re-enable it.
+
+- name: Load OS Family Renewal Unit Handling
+  ansible.builtin.include_tasks: "os_family/{{ ansible_facts['os_family'] }}.yml"
+
+- name: Flush Handlers After Masking Vendor Timers
+  ansible.builtin.meta: flush_handlers
 
 # ----------------------------------------------------------------
 # Systemd timer-based renewal
@@ -12,7 +23,7 @@
     owner: root
     group: root
     mode: "0644"
-  when: acme_renewal_method == 'systemd'
+  when: _acme_effective_renewal_method == 'systemd'
   notify: reload systemd daemon
 
 - name: Deploy Certbot Renewal Systemd Timer Unit
@@ -22,7 +33,7 @@
     owner: root
     group: root
     mode: "0644"
-  when: acme_renewal_method == 'systemd'
+  when: _acme_effective_renewal_method == 'systemd'
   notify:
     - reload systemd daemon
     - enable certbot renewal timer
@@ -35,14 +46,18 @@
     name: certbot-renewal.timer
     state: started
     enabled: true
+    masked: false
     daemon_reload: true
-  when: acme_renewal_method == 'systemd'
+  when: _acme_effective_renewal_method == 'systemd'
 
 # ----------------------------------------------------------------
 # Cron-based renewal
 # ----------------------------------------------------------------
 
 - name: Configure Certbot Renewal Cron Job
+  # certbot runs executable scripts from renewal-hooks/{pre,post,deploy} itself,
+  # so no --deploy-hook/--renew-hook flag is needed (or wanted) here. The
+  # environment file carries the trust root used for renewal.
   ansible.builtin.cron:
     name: "certbot-renewal"
     minute: "{{ acme_renewal_cron_minute }}"
@@ -52,14 +67,13 @@
     weekday: "{{ acme_renewal_cron_weekday }}"
     user: "{{ acme_renewal_cron_user }}"
     job: >-
-      {{ acme_certbot_bin }} renew --quiet
-      --deploy-hook "{{ acme_deploy_hook_dir }}/acme-combine-pem.sh"
-      >> {{ acme_renewal_log_file }} 2>&1
+      set -a; [ -r {{ acme_renewal_env_file }} ] && . {{ acme_renewal_env_file }}; set +a;
+      {{ acme_certbot_bin }} renew --quiet >> {{ acme_renewal_log_file }} 2>&1
     cron_file: certbot-renewal
-  when: acme_renewal_method == 'cron'
+  when: _acme_effective_renewal_method == 'cron'
 
 # ----------------------------------------------------------------
-# Cleanup: remove the method not in use
+# Cleanup: make sure the method not in use cannot run
 # ----------------------------------------------------------------
 
 - name: Check If Crontab is Available
@@ -75,13 +89,31 @@
     cron_file: certbot-renewal
     state: absent
   when:
-    - acme_renewal_method == 'systemd'
+    - _acme_effective_renewal_method == 'systemd'
     - acme_crontab_check.rc == 0
 
-- name: Disable Systemd Timer When Using Cron
+- name: Check Whether the Role-Owned Timer Unit Exists
+  ansible.builtin.stat:
+    path: /etc/systemd/system/certbot-renewal.timer
+  register: _acme_role_timer_unit
+  when: _acme_effective_renewal_method == 'cron'
+
+- name: Disable Role Timer When Using Cron
   ansible.builtin.systemd:
     name: certbot-renewal.timer
     state: stopped
     enabled: false
-  when: acme_renewal_method == 'cron'
-  failed_when: false
+  when:
+    - _acme_effective_renewal_method == 'cron'
+    - _acme_role_timer_unit.stat.exists
+
+- name: Remove Role Timer Unit When Using Cron
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/certbot-renewal.timer
+    - /etc/systemd/system/certbot-renewal.service
+  when:
+    - _acme_effective_renewal_method == 'cron'
+    - _acme_role_timer_unit.stat.exists

@@ -9,11 +9,11 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart={{ acme_certbot_bin }} renew --quiet --deploy-hook "{{ acme_deploy_hook_dir }}/acme-combine-pem.sh"
-{% if acme_renewal_pre_hook | length > 0 %}
-ExecStartPre={{ acme_pre_hook_dir }}/acme-pre-hook.sh
-{% endif %}
-{% if acme_renewal_post_hook | length > 0 %}
-ExecStartPost={{ acme_post_hook_dir }}/acme-post-hook.sh
-{% endif %}
+# Trust root and client environment shared with initial issuance.
+EnvironmentFile=-{{ acme_renewal_env_file }}
+# certbot executes executable scripts in renewal-hooks/{pre,post,deploy} itself.
+# No --deploy-hook/--renew-hook flag is passed here, which avoids pointing at a
+# script that may not exist and keeps deploy hooks in the directory certbot
+# scans after every successful renewal.
+ExecStart={{ acme_certbot_bin }} renew --quiet
 PrivateTmp=true

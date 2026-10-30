@@ -2,5 +2,117 @@
 - name: Converge
   hosts: all
   become: true
+  vars:
+    # A local, non-routable endpoint stands in for the platform CA. No real
+    # issuance happens in the container: a valid fixture certificate is placed
+    # in the live tree so the role's renewal/deploy paths run end to end.
+    acme_email: "molecule@example.com"
+    acme_provider: "custom"
+    acme_custom_server_url: "https://acme.molecule.invalid/directory"
+    acme_custom_ca_root: "/etc/pki/molecule-test-root.pem"
+    acme_renewal_method: "systemd"
+    acme_renewal_deploy_hooks:
+      - name: molecule-hook-fixture
+        content: |
+          echo "deploy-hook-ran" > /var/tmp/acme-hook-ran
+    # Fixture values only. Real deployments take these from the vault; the role
+    # has no defaults for them.
+    acme_eab_kid: "molecule-eab-kid"
+    acme_eab_hmac_key: "bW9sZWN1bGUtZWFiLWhtYWMta2V5LWZpeHR1cmU="
+    acme_certificates:
+      - name: molecule.example.com
+        domains:
+          - molecule.example.com
+        challenge: http-01
+        combine_pem: true
+        deploy_services: []
+        enabled: true
+  pre_tasks:
+    - name: Create Molecule Fixture Directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /etc/pki
+        - /etc/letsencrypt/live/molecule.example.com
+        - /etc/letsencrypt/renewal
+        - /etc/letsencrypt/accounts/acme.molecule.invalid/directory/molecule
+        - /etc/letsencrypt/renewal-hooks/deploy
+
+    - name: Generate Molecule Test CA Root
+      ansible.builtin.command:
+        cmd: >-
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 825
+          -keyout /etc/pki/molecule-test-root.key
+          -out /etc/pki/molecule-test-root.pem
+          -subj "/CN=molecule-acme-root"
+          -addext "basicConstraints=critical,CA:TRUE"
+          -addext "keyUsage=critical,keyCertSign,cRLSign"
+      args:
+        creates: /etc/pki/molecule-test-root.pem
+
+    - name: Generate Molecule Fixture Certificate
+      ansible.builtin.command:
+        cmd: >-
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 825
+          -keyout /etc/letsencrypt/live/molecule.example.com/privkey.pem
+          -out /etc/letsencrypt/live/molecule.example.com/fullchain.pem
+          -subj "/CN=molecule.example.com"
+          -addext "subjectAltName=DNS:molecule.example.com"
+      args:
+        creates: /etc/letsencrypt/live/molecule.example.com/fullchain.pem
+
+    - name: Set Molecule Fixture Private Key Mode
+      ansible.builtin.file:
+        path: /etc/letsencrypt/live/molecule.example.com/privkey.pem
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Create Molecule Fixture Account Key
+      ansible.builtin.copy:
+        dest: /etc/letsencrypt/accounts/acme.molecule.invalid/directory/molecule/private_key.json
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          {"kty": "EC", "d": "molecule-fixture-private-key", "crv": "P-256"}
+
+    - name: Create Molecule Fixture Renewal Configuration
+      ansible.builtin.copy:
+        dest: /etc/letsencrypt/renewal/molecule.example.com.conf
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # renew_before_expiry = 30 days
+          version = 2.0.0
+          archive_dir = /etc/letsencrypt/archive/molecule.example.com
+          cert = /etc/letsencrypt/live/molecule.example.com/cert.pem
+          privkey = /etc/letsencrypt/live/molecule.example.com/privkey.pem
+          fullchain = /etc/letsencrypt/live/molecule.example.com/fullchain.pem
+          chain = /etc/letsencrypt/live/molecule.example.com/chain.pem
+
+          [renewalparams]
+          account = molecule
+          authenticator = webroot
+          server = https://acme.molecule.invalid/directory
+          renew_before_expiry = 30 days
+
+    - name: Create Non-Executable Deploy Hook Fixture
+      # force: false keeps the mode stable across repeated converge runs; the
+      # role is expected to repair the missing execute bit on the first run.
+      ansible.builtin.copy:
+        dest: /etc/letsencrypt/renewal-hooks/deploy/molecule-mode-fixture.sh
+        owner: root
+        group: root
+        mode: "0644"
+        force: false
+        content: |
+          #!/bin/bash
+          echo "mode-fixture-ran" > /var/tmp/acme-mode-hook-ran
   roles:
     - role_acme

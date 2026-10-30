@@ -1,0 +1,38 @@
+---
+# tasks/restore.yml - Restore ACME account keys and renewal configuration
+#
+# Disaster recovery path. Disabled by default; enable with
+# `acme_restore_enabled: true`. Restores `acme_restore_archive` when set,
+# otherwise the newest account archive in `acme_backup_dir`.
+
+- name: Find Account Backup Archives for Restore
+  ansible.builtin.find:
+    paths: "{{ acme_backup_dir }}"
+    patterns: "account-*.tar.gz"
+    file_type: file
+  register: _acme_restore_archives
+
+- name: Select Archive to Restore
+  ansible.builtin.set_fact:
+    _acme_restore_source: >-
+      {{ acme_restore_archive
+         if acme_restore_archive | length > 0
+         else ((_acme_restore_archives.files | sort(attribute='mtime', reverse=true)
+                | map(attribute='path') | list | first) | default('')) }}
+
+- name: Assert a Restore Archive Is Available
+  ansible.builtin.assert:
+    that:
+      - _acme_restore_source | length > 0
+    fail_msg: >
+      acme_restore_enabled is true but no account archive was found in
+      {{ acme_backup_dir }} and acme_restore_archive is empty.
+    quiet: true
+
+- name: Restore Account Keys and Renewal Configuration
+  ansible.builtin.unarchive:
+    src: "{{ _acme_restore_source }}"
+    dest: /
+    remote_src: true
+    extra_opts:
+      - "--overwrite"

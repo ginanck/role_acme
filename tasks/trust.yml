@@ -1,0 +1,49 @@
+---
+# tasks/trust.yml - Trust the ACME endpoint against a configured root
+#
+# When acme_custom_ca_root is set the role renders a bundle from that root and
+# points every client invocation (initial issuance AND renewals) at it through
+# REQUESTS_CA_BUNDLE. TLS verification is never disabled: the role never passes
+# --no-verify-ssl or --insecure to the client.
+
+- name: Stat Configured Custom CA Root
+  ansible.builtin.stat:
+    path: "{{ acme_custom_ca_root }}"
+  register: _acme_custom_ca_root_stat
+  when: acme_custom_ca_root | length > 0
+
+- name: Assert Custom CA Root Exists and Is a File
+  ansible.builtin.assert:
+    that:
+      - _acme_custom_ca_root_stat.stat.exists
+      - _acme_custom_ca_root_stat.stat.isreg
+    fail_msg: >
+      acme_custom_ca_root points at '{{ acme_custom_ca_root }}' but that file
+      does not exist or is not a regular file. Deploy the CA root before this
+      role runs; the role will not fall back to skipping verification.
+    quiet: true
+  when: acme_custom_ca_root | length > 0
+
+- name: Render ACME Trust Bundle From Configured Root
+  ansible.builtin.copy:
+    src: "{{ acme_custom_ca_root }}"
+    dest: "{{ acme_ca_bundle_path }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  when: acme_custom_ca_root | length > 0
+
+- name: Remove Stale Trust Bundle When No Custom Root Is Configured
+  ansible.builtin.file:
+    path: "{{ acme_ca_bundle_path }}"
+    state: absent
+  when: acme_custom_ca_root | length == 0
+
+- name: Render Renewal Environment File
+  ansible.builtin.template:
+    src: renewal.env.j2
+    dest: "{{ acme_renewal_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"

@@ -16,6 +16,7 @@
     - "{{ acme_config_dir }}"
     - "{{ acme_work_dir }}"
     - "{{ acme_log_dir }}"
+    - "{{ acme_renewal_config_dir }}"
     - "{{ acme_hooks_dir }}"
     - "{{ acme_pre_hook_dir }}"
     - "{{ acme_post_hook_dir }}"
@@ -133,3 +134,28 @@
       set -euo pipefail
       {{ acme_renewal_post_hook }}
   when: acme_renewal_post_hook | length > 0
+
+# ----------------------------------------------------------------
+# Hook executability
+# ----------------------------------------------------------------
+
+- name: Find All Deployed Renewal Hook Scripts
+  # certbot only runs hook scripts that carry the execute bit. Discover every
+  # file in the hook directories so a manually dropped script (or a copy that
+  # lost its mode) still executes on the next renewal.
+  ansible.builtin.find:
+    paths:
+      - "{{ acme_pre_hook_dir }}"
+      - "{{ acme_post_hook_dir }}"
+      - "{{ acme_deploy_hook_dir }}"
+    file_type: file
+  register: _acme_hook_files
+
+- name: Ensure Renewal Hook Scripts Are Executable
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    mode: "0755"
+  loop: "{{ _acme_hook_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: item.mode != '0755'

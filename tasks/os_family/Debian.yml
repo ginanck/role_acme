@@ -1,0 +1,32 @@
+---
+# tasks/os_family/Debian.yml - Debian family renewal unit handling
+#
+# The Debian/Ubuntu certbot package ships certbot.timer (older releases also
+# carried certbot-renew.timer). The role manages renewal itself, so those units
+# are masked: a mask is a /dev/null symlink in /etc/systemd/system and therefore
+# survives package updates that would otherwise re-enable the vendor unit.
+
+- name: Set Vendor Renewal Timer Units (Debian)
+  ansible.builtin.set_fact:
+    _acme_vendor_renewal_timers:
+      - certbot.timer
+      - certbot-renew.timer
+
+- name: Determine Vendor Renewal Timer State (Debian)
+  ansible.builtin.command:  # noqa: command-instead-of-module
+    cmd: systemctl show -p LoadState --value {{ item }}
+  loop: "{{ _acme_vendor_renewal_timers }}"
+  register: _acme_vendor_timer_state
+  changed_when: false
+  failed_when: false
+  loop_control:
+    label: "{{ item }}"
+
+- name: Mask Vendor Renewal Timers (Debian)
+  ansible.builtin.systemd:
+    name: "{{ item.item }}"
+    masked: true
+  loop: "{{ _acme_vendor_timer_state.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stdout | default('') | trim not in ['not-found', '']

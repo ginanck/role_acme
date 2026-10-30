@@ -22,6 +22,35 @@ acme_custom_server_url: ""
 # Accept ACME provider terms of service
 acme_agree_tos: true
 
+# ----------------------------------------------------------------
+# External Account Binding (EAB)
+# ----------------------------------------------------------------
+# Providers such as ZeroSSL, or an internal platform CA, may require the ACME
+# account to be bound to an existing account before any certificate is issued.
+# Both values MUST come from the vault. There are deliberately no defaults:
+# when both are empty no binding flags are sent to the client.
+acme_eab_kid: ""
+acme_eab_hmac_key: ""
+
+# Set to true for providers that mandate EAB; the role then fails fast when the
+# binding values are missing instead of failing later inside the ACME client.
+acme_eab_required: false
+
+# ----------------------------------------------------------------
+# Custom CA root
+# ----------------------------------------------------------------
+# Path on the target host to the PEM encoded root (or trust chain) that signs
+# the ACME endpoint certificate. When set, the client verifies the endpoint
+# against exactly this root. Certificate verification is never disabled.
+acme_custom_ca_root: ""
+
+# Rendered trust bundle used by the client and by every renewal path.
+acme_ca_bundle_path: "{{ acme_config_dir }}/ca-bundle.pem"
+
+# Environment file sourced by the renewal timer / cron job so renewals use the
+# same trust root and configuration as the initial issuance.
+acme_renewal_env_file: "{{ acme_config_dir }}/renewal.env"
+
 # ================================================================
 # ACME PROVIDER URLS (internal — override only for custom providers)
 # ================================================================
@@ -148,6 +177,11 @@ acme_deploy_hook_dir: "{{ acme_hooks_dir }}/deploy"
 # Directory for combined PEM files (used by HAProxy, etc.)
 acme_combined_pem_dir: "/etc/ssl/acme"
 
+# Directory scanned for executable deploy hooks. Deploy hooks must live in the
+# certbot deploy hook directory (NOT pre/post, and NOT a renew-hook) so that
+# certbot runs them after every successful renewal.
+acme_hook_dir: "{{ acme_deploy_hook_dir }}"
+
 # ================================================================
 # CERTIFICATE DEPLOYMENT
 # ================================================================
@@ -170,8 +204,13 @@ acme_combined_pem_mode: "0640"
 # Enable automated certificate renewal
 acme_renewal_enabled: true
 
-# Renewal method: cron or systemd
+# Renewal mechanism: cron or systemd.
+# `acme_renewal_method` is the long-standing name and remains the default.
 acme_renewal_method: "systemd"
+
+# Optional alias. When set (non-empty) it wins over acme_renewal_method so
+# operators can use the shorter `acme_renewal_mode` name from the spec.
+acme_renewal_mode: ""
 
 # Cron schedule for renewal checks (only used when acme_renewal_method is "cron")
 # Default: twice daily at random minute (recommended by Let's Encrypt)
@@ -233,8 +272,17 @@ acme_backup_enabled: true
 # Backup directory
 acme_backup_dir: "/var/backups/acme"
 
-# Number of backups to retain per certificate
-acme_backup_retain: 5
+# Number of account/renewal archives and per-certificate backups to retain
+acme_backup_retention: 5
+
+# Backwards compatible alias for the per-certificate backup retention.
+acme_backup_retain: "{{ acme_backup_retention }}"
+
+# Restore the newest account/renewal archive before the role runs.
+# Off by default: restore is an explicit disaster-recovery operation.
+acme_restore_enabled: false
+# Specific archive to restore. Empty means "newest archive in acme_backup_dir".
+acme_restore_archive: ""
 
 # ================================================================
 # MONITORING & OBSERVABILITY

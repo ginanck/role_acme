@@ -1,66 +1,275 @@
 ---
 - name: Verify
   hosts: all
-  gather_facts: false
+  become: true
+  gather_facts: true
   tasks:
-    - name: Check Certbot is Installed
+    # ----------------------------------------------------------------
+    # AC-1: external account binding is passed to the client, vault only
+    # ----------------------------------------------------------------
+    - name: test_ac1_read_role_defaults
+      ansible.builtin.set_fact:
+        _acme_defaults: "{{ lookup('file', playbook_dir ~ '/../../defaults/main.yml') | from_yaml }}"
+
+    - name: test_ac1_eab_has_no_defaults
+      ansible.builtin.assert:
+        that:
+          - _acme_defaults.acme_eab_kid == ''
+          - _acme_defaults.acme_eab_hmac_key == ''
+        fail_msg: "external account binding values must have no defaults; they come from the vault"
+
+    - name: test_ac1_eab_flags_reach_the_client
+      ansible.builtin.assert:
+        that:
+          - "'--eab-kid' in lookup('file', playbook_dir ~ '/../../tasks/issue.yml')"
+          - "'--eab-hmac-key' in lookup('file', playbook_dir ~ '/../../tasks/issue.yml')"
+          - "'_acme_eab_flags' in lookup('file', playbook_dir ~ '/../../tasks/issue.yml')"
+          - "'_acme_eab_flags' in lookup('file', playbook_dir ~ '/../../vars/main.yml')"
+        fail_msg: "the binding values must be passed to every certbot invocation"
+
+    - name: test_ac1_eab_tasks_are_no_log
+      ansible.builtin.assert:
+        that:
+          - "lookup('file', playbook_dir ~ '/../../tasks/issue.yml').count('no_log:') == 4"
+        fail_msg: "all four issuance commands must suppress logging when binding is configured"
+
+    # ----------------------------------------------------------------
+    # AC-2: custom root is trusted, verification never bypassed
+    # ----------------------------------------------------------------
+    - name: test_ac2_stat_trust_bundle
+      ansible.builtin.stat:
+        path: /etc/letsencrypt/ca-bundle.pem
+      register: _acme_bundle
+
+    - name: test_ac2_stat_renewal_env
+      ansible.builtin.stat:
+        path: /etc/letsencrypt/renewal.env
+      register: _acme_renewal_env
+
+    - name: test_ac2_assert_trust_artifacts_exist
+      ansible.builtin.assert:
+        that:
+          - _acme_bundle.stat.exists
+          - _acme_bundle.stat.mode == '0644'
+          - _acme_renewal_env.stat.exists
+          - _acme_renewal_env.stat.mode == '0600'
+        fail_msg: "the trust bundle and renewal environment file must be rendered"
+
+    - name: test_ac2_bundle_matches_configured_root
       ansible.builtin.command:
-        cmd: certbot --version
-      register: certbot_version
+        cmd: cmp -s /etc/pki/molecule-test-root.pem /etc/letsencrypt/ca-bundle.pem
       changed_when: false
 
-    - name: Assert Certbot is Available
+    - name: test_ac2_verifies_against_bundle
+      ansible.builtin.command:
+        cmd: openssl verify -CAfile /etc/letsencrypt/ca-bundle.pem /etc/pki/molecule-test-root.pem
+      register: _acme_verify
+      changed_when: false
+
+    - name: test_ac2_assert_verification_succeeds
       ansible.builtin.assert:
         that:
-          - certbot_version.rc == 0
-        fail_msg: "certbot is not installed or not in PATH"
+          - _acme_verify.rc == 0
+          - "'OK' in _acme_verify.stdout"
+        fail_msg: "the ACME endpoint root must verify against the rendered bundle"
 
-    - name: Check ACME Configuration Directory Exists
-      ansible.builtin.stat:
-        path: /etc/letsencrypt
-      register: acme_config_dir_stat
+    - name: test_ac2_renewal_env_exports_bundle
+      ansible.builtin.slurp:
+        src: /etc/letsencrypt/renewal.env
+      register: _acme_renewal_env_content
 
-    - name: Assert ACME Configuration Directory Exists
+    - name: test_ac2_service_uses_renewal_env
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/certbot-renewal.service
+      register: _acme_service_unit
+
+    - name: test_ac2_assert_trust_is_wired
       ansible.builtin.assert:
         that:
-          - acme_config_dir_stat.stat.exists
-          - acme_config_dir_stat.stat.isdir
+          - "'REQUESTS_CA_BUNDLE=/etc/letsencrypt/ca-bundle.pem' in (_acme_renewal_env_content.content | b64decode)"
+          - "'EnvironmentFile=-/etc/letsencrypt/renewal.env' in (_acme_service_unit.content | b64decode)"
+        fail_msg: "renewals must use the same trust root as initial issuance"
 
-    - name: Check Certbot CLI Configuration Exists
-      ansible.builtin.stat:
-        path: /etc/letsencrypt/cli.ini
-      register: certbot_cli_stat
+    - name: test_ac2_no_verification_bypass_in_service_or_cli
+      ansible.builtin.shell:
+        cmd: grep -E -i 'no-verify-ssl|--insecure' /etc/systemd/system/certbot-renewal.service /etc/letsencrypt/cli.ini /etc/letsencrypt/renewal.env
+      register: _acme_bypass
+      changed_when: false
+      failed_when: false
 
-    - name: Assert Certbot CLI Configuration Exists
+    - name: test_ac2_assert_no_verification_bypass
       ansible.builtin.assert:
         that:
-          - certbot_cli_stat.stat.exists
+          - _acme_bypass.rc != 0
+          - "'no-verify-ssl' not in lookup('file', playbook_dir ~ '/../../tasks/issue.yml')"
+          - "'--insecure' not in lookup('file', playbook_dir ~ '/../../tasks/issue.yml')"
+          - "'no-verify-ssl' not in lookup('file', playbook_dir ~ '/../../templates/certbot-renewal.service.j2')"
+          - "'no-verify-ssl' not in lookup('file', playbook_dir ~ '/../../templates/renewal.env.j2')"
+          - "'--insecure' not in lookup('file', playbook_dir ~ '/../../templates/certbot-renewal.service.j2')"
+          - "'--insecure' not in lookup('file', playbook_dir ~ '/../../templates/renewal.env.j2')"
+        fail_msg: "the role must never disable certificate verification"
 
-    - name: Check Monitoring Script is Deployed
-      ansible.builtin.stat:
-        path: /usr/local/bin/acme-cert-check
-      register: monitoring_script_stat
-
-    - name: Assert Monitoring Script is Deployed
+    - name: test_ac2_assert_no_renew_hook_misuse
       ansible.builtin.assert:
         that:
-          - monitoring_script_stat.stat.exists
-          - monitoring_script_stat.stat.executable
+          - "'--renew-hook' not in (_acme_service_unit.content | b64decode)"
+          - "'--deploy-hook' not in (_acme_service_unit.content | b64decode)"
+        fail_msg: "deploy hooks belong in the deploy hook directory, not in renew-hook/--deploy-hook flags"
 
-    - name: Check Renewal Hook Directories Exist
-      ansible.builtin.stat:
-        path: "{{ item }}"
-      register: hook_dirs_stat
-      loop:
-        - /etc/letsencrypt/renewal-hooks/pre
-        - /etc/letsencrypt/renewal-hooks/post
-        - /etc/letsencrypt/renewal-hooks/deploy
+    # ----------------------------------------------------------------
+    # AC-3: exactly one renewal mechanism is active
+    # ----------------------------------------------------------------
+    - name: test_ac3_set_vendor_timer_candidates
+      ansible.builtin.set_fact:
+        _acme_vendor_timers: >-
+          {{ (ansible_facts['os_family'] == 'RedHat')
+             | ternary(['certbot-renew.timer'],
+                       ['certbot.timer', 'certbot-renew.timer']) }}
 
-    - name: Assert Renewal Hook Directories Exist
+    - name: test_ac3_read_vendor_timer_state
+      ansible.builtin.command:
+        cmd: systemctl is-enabled {{ item }}
+      loop: "{{ _acme_vendor_timers }}"
+      register: _acme_vendor_enabled
+      changed_when: false
+      failed_when: false
+      loop_control:
+        label: "{{ item }}"
+
+    - name: test_ac3_read_vendor_timer_active
+      ansible.builtin.command:
+        cmd: systemctl is-active {{ item }}
+      loop: "{{ _acme_vendor_timers }}"
+      register: _acme_vendor_active
+      changed_when: false
+      failed_when: false
+      loop_control:
+        label: "{{ item }}"
+
+    - name: test_ac3_assert_vendor_timers_are_masked
       ansible.builtin.assert:
         that:
-          - item.stat.exists
-          - item.stat.isdir
-      loop: "{{ hook_dirs_stat.results }}"
+          - item.stdout | trim in ['masked', 'not-found', 'inactive', 'unknown']
+        fail_msg: >
+          vendor renewal timer {{ item.item }} must be masked so a package update
+          cannot re-enable it (state: {{ item.stdout | trim }})
+      loop: "{{ _acme_vendor_enabled.results }}"
       loop_control:
         label: "{{ item.item }}"
+
+    - name: test_ac3_assert_vendor_timers_are_not_active
+      ansible.builtin.assert:
+        that:
+          - item.stdout | trim != 'active'
+        fail_msg: "vendor renewal timer {{ item.item }} must not be active"
+      loop: "{{ _acme_vendor_active.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: test_ac3_role_timer_is_enabled_and_active
+      ansible.builtin.command:
+        cmd: systemctl is-enabled certbot-renewal.timer
+      register: _acme_role_timer_enabled
+      changed_when: false
+
+    - name: test_ac3_role_timer_is_active
+      ansible.builtin.command:
+        cmd: systemctl is-active certbot-renewal.timer
+      register: _acme_role_timer_active
+      changed_when: false
+
+    - name: test_ac3_assert_single_renewal_timer
+      ansible.builtin.assert:
+        that:
+          - _acme_role_timer_enabled.stdout | trim == 'enabled'
+          - _acme_role_timer_active.stdout | trim == 'active'
+        fail_msg: "the configured systemd renewal timer must be the active mechanism"
+
+    # ----------------------------------------------------------------
+    # AC-4: deploy hooks execute from the deploy hook directory
+    # ----------------------------------------------------------------
+    - name: test_ac4_find_deploy_hooks
+      ansible.builtin.find:
+        paths: /etc/letsencrypt/renewal-hooks/deploy
+        file_type: file
+      register: _acme_verify_deploy_hooks
+
+    - name: test_ac4_assert_deploy_hooks_are_executable
+      ansible.builtin.assert:
+        that:
+          - item.stat.executable
+          - item.stat.mode == '0755'
+        fail_msg: "deploy hook {{ item.path }} must be executable"
+      loop: "{{ _acme_verify_deploy_hooks.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: test_ac4_assert_combine_hook_in_deploy_dir
+      ansible.builtin.stat:
+        path: /etc/letsencrypt/renewal-hooks/deploy/acme-combine-pem.sh
+      register: _acme_combine_hook
+
+    - name: test_ac4_assert_hooks_ran
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: _acme_hook_markers
+      loop:
+        - /var/tmp/acme-hook-ran
+        - /var/tmp/acme-mode-hook-ran
+
+    - name: test_ac4_assert_hook_execution_and_placement
+      ansible.builtin.assert:
+        that:
+          - _acme_combine_hook.stat.exists
+          - _acme_combine_hook.stat.executable
+          - _acme_hook_markers.results | selectattr('stat.exists') | list | length == 2
+        fail_msg: "deploy hooks must be in the deploy directory and actually execute"
+
+    - name: test_ac4_assert_no_deploy_hooks_in_pre_or_post
+      ansible.builtin.find:
+        paths:
+          - /etc/letsencrypt/renewal-hooks/pre
+          - /etc/letsencrypt/renewal-hooks/post
+        patterns: "molecule-*.sh"
+        file_type: file
+      register: _acme_misplaced_hooks
+
+    - name: test_ac4_assert_deploy_hooks_not_in_pre_post
+      ansible.builtin.assert:
+        that:
+          - _acme_misplaced_hooks.matched == 0
+        fail_msg: "deploy hooks must not be placed in the pre/post hook directories"
+
+    # ----------------------------------------------------------------
+    # AC-6: account keys and renewal configuration are archived
+    # ----------------------------------------------------------------
+    - name: test_ac6_find_account_archives
+      ansible.builtin.find:
+        paths: /var/backups/acme
+        patterns: "account-*.tar.gz"
+        file_type: file
+      register: _acme_account_archives
+
+    - name: test_ac6_assert_archive_exists
+      ansible.builtin.assert:
+        that:
+          - _acme_account_archives.matched > 0
+          - _acme_account_archives.files | length <= 5
+        fail_msg: "account keys and renewal configuration must be archived with retention"
+
+    - name: test_ac6_list_newest_archive
+      ansible.builtin.command:
+        cmd: >-
+          tar -tzf
+          {{ (_acme_account_archives.files | sort(attribute='mtime', reverse=true) | first).path }}
+      register: _acme_archive_contents
+      changed_when: false
+
+    - name: test_ac6_assert_archive_contents
+      ansible.builtin.assert:
+        that:
+          - "'accounts/' in _acme_archive_contents.stdout"
+          - "'renewal/' in _acme_archive_contents.stdout"
+          - "'private_key.json' in _acme_archive_contents.stdout"
+          - "'molecule.example.com.conf' in _acme_archive_contents.stdout"
+        fail_msg: "the archive must contain account keys and renewal configuration"

@@ -1,5 +1,5 @@
 ---
-# tasks/deploy.yml - Deploy combined PEM files for load balancers
+# tasks/deploy.yml - Deploy combined PEM files and renewal deploy hooks
 
 - name: Validate Source Certificate Files Before Combining
   ansible.builtin.command:
@@ -15,23 +15,33 @@
   failed_when: false
 
 - name: Combine Fullchain and Private Key into Single PEM
-  # Concatenates fullchain.pem + privkey.pem into a single PEM file
-  # that HAProxy and similar load balancers can consume for SSL termination.
+  # Concatenates fullchain.pem + privkey.pem into a single PEM file that HAProxy
+  # and similar load balancers can consume for SSL termination. The content is
+  # compared first so a second run reports no change.
   ansible.builtin.shell:
-    cmd: >-
-      cat "{{ acme_cert_dir }}/{{ item.item.name }}/fullchain.pem"
-      "{{ acme_cert_dir }}/{{ item.item.name }}/privkey.pem"
-      > "{{ item.item.combine_pem_path | default(acme_combined_pem_dir + '/' + item.item.name + '.pem') }}"
+    cmd: |
+      set -o pipefail
+      dest="{{ item.item.combine_pem_path | default(acme_combined_pem_dir + '/' + item.item.name + '.pem') }}"
+      tmp="$(mktemp "${dest}.XXXXXX")"
+      trap 'rm -f "${tmp}"' EXIT
+      cat "{{ acme_cert_dir }}/{{ item.item.name }}/fullchain.pem" \
+          "{{ acme_cert_dir }}/{{ item.item.name }}/privkey.pem" > "${tmp}"
+      if [ -f "${dest}" ] && cmp -s "${tmp}" "${dest}"; then
+          echo IDENTICAL
+      else
+          mv -f "${tmp}" "${dest}"
+          echo UPDATED
+      fi
   args:
     executable: /bin/bash
   loop: "{{ _acme_source_cert_check.results }}"
   loop_control:
     label: "{{ item.item.name }}"
+  register: _acme_combine_result
   when:
     - item.rc == 0
     - not acme_dry_run
-  changed_when: true
-  notify: run deploy hooks
+  changed_when: false
 
 - name: Set Correct Permissions on Combined PEM Files
   ansible.builtin.file:
@@ -46,12 +56,44 @@
     - item.rc == 0
     - not acme_dry_run
 
+- name: Run Deploy Hooks When a Combined PEM Changed
+  # Notify only when the concatenation above actually rewrote a file. On a
+  # renewal certbot itself runs the deploy hooks, this covers initial issuance.
+  ansible.builtin.command:
+    cmd: /bin/true
+  changed_when: true
+  notify: run deploy hooks
+  when: >-
+    _acme_combine_result.results | default([])
+    | selectattr('stdout', 'defined')
+    | selectattr('stdout', 'search', 'UPDATED')
+    | list | length > 0
+
+- name: Find Deployed Renewal Hook Scripts
+  # Hooks live in the certbot deploy directory so certbot runs them after every
+  # successful renewal. This glob is also what the deploy handler executes.
+  ansible.builtin.find:
+    paths: "{{ acme_hook_dir }}"
+    file_type: file
+  register: _acme_deploy_hook_files
+
+- name: Assert Deploy Hooks Are Executable
+  ansible.builtin.assert:
+    that:
+      - item.stat.executable | default(item.mode == '0755')
+    fail_msg: >
+      Deploy hook '{{ item.path }}' is not executable. certbot silently skips
+      non-executable hooks, which breaks certificate distribution.
+  loop: "{{ _acme_deploy_hook_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
 - name: Deploy Certificate Combine Script for Renewals
   # This deploy hook runs after each successful certbot renewal and
   # regenerates the combined PEM files, then reloads the consuming services.
   ansible.builtin.template:
     src: deploy_hook_combine.sh.j2
-    dest: "{{ acme_deploy_hook_dir }}/acme-combine-pem.sh"
+    dest: "{{ acme_hook_dir }}/acme-combine-pem.sh"
     owner: root
     group: root
     mode: "0755"

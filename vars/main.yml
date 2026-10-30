@@ -1,0 +1,27 @@
+---
+# vars/main.yml - computed values shared by every task file
+
+# Effective renewal mechanism. `acme_renewal_mode` (spec name) wins when set,
+# otherwise the long-standing `acme_renewal_method` is used.
+_acme_effective_renewal_method: >-
+  {{ acme_renewal_mode
+     if (acme_renewal_mode | default('') | length > 0)
+     else acme_renewal_method }}
+
+# True only when a complete external account binding is configured.
+_acme_eab_configured: >-
+  {{ (acme_eab_kid | default('') | length > 0) and
+     (acme_eab_hmac_key | default('') | length > 0) }}
+
+# Client flags for EAB. Empty when no binding is configured: there is no
+# implicit/default binding value anywhere in the role.
+_acme_eab_flags: >-
+  {{ ('--eab-kid ' ~ acme_eab_kid ~ ' --eab-hmac-key ' ~ acme_eab_hmac_key)
+     if _acme_eab_configured | bool else '' }}
+
+# Environment applied to every ACME client invocation. When a custom root is
+# configured the client is pointed at the rendered bundle. Verification is
+# never bypassed (no --no-verify-ssl, no --insecure).
+_acme_certbot_environment: >-
+  {{ {'REQUESTS_CA_BUNDLE': acme_ca_bundle_path}
+     if (acme_custom_ca_root | default('') | length > 0) else {} }}

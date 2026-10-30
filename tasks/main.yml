@@ -7,6 +7,10 @@
 - name: Run Pre-Flight Validation Checks
   ansible.builtin.include_tasks: validation.yml
 
+- name: Restore Account Keys and Renewal Configuration
+  ansible.builtin.include_tasks: restore.yml
+  when: acme_restore_enabled | bool
+
 - name: Install Certbot Packages
   vars:
     supported_os: ["RedHat", "Debian"]
@@ -15,6 +19,9 @@
 
 - name: Configure ACME Directories and Settings
   ansible.builtin.include_tasks: configure.yml
+
+- name: Configure ACME Endpoint Trust
+  ansible.builtin.include_tasks: trust.yml
 
 - name: Issue Certificates
   ansible.builtin.include_tasks: issue.yml
@@ -31,3 +38,7 @@
 - name: Configure Certificate Monitoring
   ansible.builtin.include_tasks: monitoring.yml
   when: acme_monitoring_enabled
+
+- name: Back Up Account Keys and Renewal Configuration
+  ansible.builtin.include_tasks: backup.yml
+  when: acme_backup_enabled

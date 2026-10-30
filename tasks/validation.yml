@@ -20,6 +20,28 @@
     fail_msg: "acme_custom_server_url must be set when acme_provider is 'custom'"
   when: acme_provider == 'custom'
 
+- name: Assert External Account Binding Values Are Complete
+  ansible.builtin.assert:
+    that:
+      - (acme_eab_kid | length == 0 and acme_eab_hmac_key | length == 0) or
+        (acme_eab_kid | length > 0 and acme_eab_hmac_key | length > 0)
+    fail_msg: >
+      External account binding is incomplete. Set BOTH acme_eab_kid and
+      acme_eab_hmac_key from the vault, or leave both empty to disable binding.
+    quiet: true
+
+- name: Assert External Account Binding Is Present When Required
+  ansible.builtin.assert:
+    that:
+      - acme_eab_kid | length > 0
+      - acme_eab_hmac_key | length > 0
+    fail_msg: >
+      acme_eab_required is true but acme_eab_kid / acme_eab_hmac_key are empty.
+      This provider cannot be used without external account binding; supply the
+      key identifier and HMAC key from the vault.
+    quiet: true
+  when: acme_eab_required | bool
+
 - name: Assert Certificate Definitions are Valid
   ansible.builtin.assert:
     that:
@@ -89,8 +111,10 @@
 - name: Assert Renewal Method is Valid
   ansible.builtin.assert:
     that:
-      - acme_renewal_method in ['cron', 'systemd']
-    fail_msg: "acme_renewal_method must be 'cron' or 'systemd', got: {{ acme_renewal_method }}"
+      - _acme_effective_renewal_method in ['cron', 'systemd']
+    fail_msg: >
+      The renewal mechanism must be 'cron' or 'systemd', got:
+      {{ _acme_effective_renewal_method }}
   when: acme_renewal_enabled
 
 - name: Assert Default Key Size is Valid for Key Type

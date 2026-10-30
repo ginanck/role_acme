@@ -1,0 +1,72 @@
+---
+# tasks/backup.yml - Archive ACME account keys and renewal configuration
+#
+# The account key and renewal configuration are what make an existing account
+# and its certificates survivable. Both are archived together. The archive name
+# is derived from a content fingerprint so a second run produces no change (the
+# archive already exists) while any real change produces exactly one new archive.
+# Retention keeps the newest `acme_backup_retention` archives.
+
+- name: Check ACME Account Directory
+  ansible.builtin.stat:
+    path: "{{ acme_config_dir }}/accounts"
+  register: _acme_accounts_dir
+  changed_when: false
+
+- name: Archive Account Keys and Renewal Configuration
+  when: _acme_accounts_dir.stat.exists
+  block:
+    - name: Compute Account and Renewal Configuration Fingerprint
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          find "{{ acme_config_dir }}/accounts" "{{ acme_renewal_config_dir }}" \
+              -type f -print0 2>/dev/null \
+            | sort -z \
+            | xargs -0 -r sha256sum \
+            | sha256sum \
+            | cut -d' ' -f1
+        executable: /bin/bash
+      register: _acme_backup_fingerprint
+      changed_when: false
+      check_mode: false
+
+    - name: Set Account Backup Archive Path
+      ansible.builtin.set_fact:
+        _acme_account_backup_archive: >-
+          {{ acme_backup_dir }}/account-{{ _acme_backup_fingerprint.stdout | trim }}.tar.gz
+
+    - name: Check Whether the Account Backup Archive Already Exists
+      ansible.builtin.stat:
+        path: "{{ _acme_account_backup_archive }}"
+      register: _acme_account_backup_stat
+      changed_when: false
+
+    - name: Create Account and Renewal Configuration Archive
+      community.general.archive:
+        path:
+          - "{{ acme_config_dir }}/accounts"
+          - "{{ acme_renewal_config_dir }}"
+        dest: "{{ _acme_account_backup_archive }}"
+        format: gz
+        mode: "0600"
+      when: not _acme_account_backup_stat.stat.exists
+
+    - name: Find Account Backup Archives
+      ansible.builtin.find:
+        paths: "{{ acme_backup_dir }}"
+        patterns: "account-*.tar.gz"
+        file_type: file
+      register: _acme_account_archives
+      changed_when: false
+
+    - name: Remove Account Backup Archives Beyond Retention
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: >-
+        {{ (_acme_account_archives.files | sort(attribute='mtime', reverse=true))
+           [acme_backup_retention | int:] }}
+      loop_control:
+        label: "{{ item.path }}"
+      when: acme_backup_retention | int > 0
